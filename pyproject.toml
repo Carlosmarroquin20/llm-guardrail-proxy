@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-guardrail-proxy"
+version = "0.1.0"
+description = "Local, zero-egress security and cost guardrail proxy for external LLM APIs."
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [{ name = "llm-guardrail-proxy maintainers" }]
+
+# Runtime requirements are duplicated in requirements.txt for tooling that
+# does not consume PEP 621 metadata (e.g. ``pip install -r``).
+dependencies = [
+    "tiktoken==0.8.0",
+    "pydantic==2.9.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "pytest-asyncio==0.24.0",
+    "pytest-cov==5.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["llm_guardrail_proxy"]

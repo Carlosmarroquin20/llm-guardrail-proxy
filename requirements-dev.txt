@@ -1,0 +1,9 @@
+# Phase 1 development / test dependencies.
+# pytest-asyncio is included pre-emptively because Phase 2 introduces the
+# async proxy surface, and keeping a single dev pin-set avoids drift later.
+
+-r requirements.txt
+
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==5.0.0

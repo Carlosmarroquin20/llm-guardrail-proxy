@@ -1,0 +1,6 @@
+# Phase 1 runtime dependencies.
+# Pinned exactly to guarantee reproducible token counts and pricing arithmetic
+# across developer workstations and CI runners.
+
+tiktoken==0.8.0
+pydantic==2.9.2
