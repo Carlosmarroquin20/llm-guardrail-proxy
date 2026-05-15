@@ -1,6 +1,7 @@
-# Phase 1 development / test dependencies.
-# pytest-asyncio is included pre-emptively because Phase 2 introduces the
-# async proxy surface, and keeping a single dev pin-set avoids drift later.
+# Development / test dependencies.
+# Phase 2 reuses httpx (already a runtime dep) for in-process ASGI testing
+# via ``httpx.MockTransport`` / ``httpx.ASGITransport``, so no extra test
+# transport library is required.
 
 -r requirements.txt
 

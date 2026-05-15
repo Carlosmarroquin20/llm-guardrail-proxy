@@ -6,39 +6,60 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 
 ## Architectural Phases
 
-| Phase | Title | Status |
-|------:|-------|:------:|
-| 1 | Tokenomics & Cost Foundation                                  | **Active** |
-| 2 | Async HTTP Reverse Proxy & Middleware Pipeline                | Planned    |
-| 3 | Content Guardrails — PII & Secret Detection (Presidio)        | Planned    |
-| 4 | FinOps Observability & Audit Plane (structlog / OTel / DuckDB)| Planned    |
-| 5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned    |
+| Phase | Title                                                         | Status     |
+|------:|---------------------------------------------------------------|:----------:|
+|     1 | Tokenomics & Cost Foundation                                  | Complete   |
+|     2 | Async HTTP Reverse Proxy & Middleware Pipeline                | **Active** |
+|     3 | Content Guardrails — PII & Secret Detection (Presidio)        | Planned    |
+|     4 | FinOps Observability & Audit Plane (structlog / OTel / DuckDB)| Planned    |
+|     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned    |
 
-## Phase 1 — Tokenomics & Cost Foundation
+## Phase 2 — Async Reverse Proxy
 
-Phase 1 delivers the deterministic cost-evaluation primitive consumed by every later phase:
+Phase 2 puts the Phase 1 evaluator behind an ASGI reverse proxy:
 
-- Network-free token counting via `tiktoken` with safe encoding fallback.
-- Configurable per-model price matrix expressed in `Decimal` to avoid float drift.
-- Threshold engine producing a structured evaluation verdict suitable for middleware dispatch.
+- **FastAPI + httpx** request pipeline with streamed upstream responses.
+- **Typed middleware chain** — middlewares return `Continue` or `Reject` so policy enforcement points compose cleanly.
+- **Async circuit breaker** in front of every upstream call.
+- **Provider adapters** for `POST /v1/chat/completions` and `POST /v1/messages` — additional providers plug in via a single dispatch table.
+- **Environment-driven configuration** via `pydantic-settings` (`GUARDRAIL_*` namespace; see `.env.example`).
 
-## Layout
-
-```
-src/llm_guardrail_proxy/   Production package
-  core/                    Pure-Python domain logic (no I/O)
-  config/                  Static, environment-overridable defaults
-tests/                     Pytest suite (unit-scope)
-```
-
-## Development
+### Running the proxy
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt -r requirements-dev.txt
+pip install -e .[dev]
+python -m llm_guardrail_proxy
+```
+
+Then point any OpenAI-compatible SDK at the proxy:
+
+```powershell
+$env:OPENAI_BASE_URL = "http://127.0.0.1:8080/v1"
+```
+
+### Layout
+
+```
+src/llm_guardrail_proxy/
+  core/                     Pure-Python domain logic (Phase 1)
+  config/                   Static, environment-overridable defaults
+  proxy/                    Async ASGI surface (Phase 2)
+    middlewares/            Concrete pipeline links
+tests/                      Pytest suite (unit + ASGI end-to-end)
+```
+
+### Development
+
+```powershell
+pip install -r requirements-dev.txt
 pytest
 ```
+
+The end-to-end tests drive the ASGI app in-process via `httpx.ASGITransport`
+and intercept upstream traffic with `httpx.MockTransport`; no socket is
+opened during the suite.
 
 ## License
 
