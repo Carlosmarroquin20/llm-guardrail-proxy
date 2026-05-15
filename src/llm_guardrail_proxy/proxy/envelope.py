@@ -9,11 +9,11 @@ stable enough to extend without breaking changes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import Any, Mapping
 
 
-class Provider(StrEnum):
+class Provider(str, Enum):
     """Recognised upstream providers.
 
     Adding a new provider here is the first step in extending coverage; the

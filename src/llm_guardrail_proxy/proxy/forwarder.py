@@ -11,7 +11,7 @@ client-visible transport are stripped before relay.
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import AsyncIterator, Mapping
 
 import httpx
 from starlette.background import BackgroundTask
@@ -99,9 +99,29 @@ class UpstreamForwarder:
         # only *after* the StreamingResponse has drained the body. Starlette
         # invokes the BackgroundTask once the response is fully sent.
         return StreamingResponse(
-            upstream.aiter_raw(),
+            _iter_body(upstream),
             status_code=upstream.status_code,
             headers=_filter_headers(upstream.headers),
             media_type=upstream.headers.get("content-type"),
             background=BackgroundTask(upstream.aclose),
         )
+
+
+async def _iter_body(response: httpx.Response) -> AsyncIterator[bytes]:
+    """Yield the response body regardless of whether it is buffered or streamed.
+
+    Real upstream calls produce a still-open stream after
+    ``client.send(..., stream=True)``; mock transports used in tests often
+    return a response whose body was synthesised from a literal ``json=`` or
+    ``content=`` argument, leaving the stream already consumed. Both cases
+    must work — the proxy is not the right layer to discriminate them.
+    """
+
+    if response.is_stream_consumed:
+        # Buffered: the bytes are already on ``response.content``. Emit as a
+        # single chunk; downstream framing is preserved because the headers
+        # were copied verbatim from the upstream response.
+        yield response.content
+        return
+    async for chunk in response.aiter_raw():
+        yield chunk

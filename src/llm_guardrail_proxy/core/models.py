@@ -10,16 +10,16 @@ a property the Phase 4 audit ledger relies on for integrity.
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ViolationKind(StrEnum):
+class ViolationKind(str, Enum):
     """Discriminator for the precise rule that a prompt violated.
 
-    Defined as a ``StrEnum`` so its members serialise transparently in JSON
+    Subclasses ``str`` so its members serialise transparently in JSON
     audit records without requiring a custom encoder.
     """
 

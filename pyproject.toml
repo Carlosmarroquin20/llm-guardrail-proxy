@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "llm-guardrail-proxy"
 version = "0.2.0"
 description = "Local, zero-egress security and cost guardrail proxy for external LLM APIs."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 readme = "README.md"
 authors = [{ name = "llm-guardrail-proxy maintainers" }]
 
@@ -43,6 +43,7 @@ addopts = [
     "--strict-config",
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true

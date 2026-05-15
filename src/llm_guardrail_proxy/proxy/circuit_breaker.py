@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from enum import StrEnum
+from enum import Enum
 from typing import Awaitable, Callable, TypeVar
 
 from llm_guardrail_proxy.proxy.exceptions import CircuitOpenError
@@ -21,7 +21,7 @@ from llm_guardrail_proxy.proxy.exceptions import CircuitOpenError
 T = TypeVar("T")
 
 
-class BreakerState(StrEnum):
+class BreakerState(str, Enum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
