@@ -90,5 +90,24 @@ class Reject:
     annotations: Mapping[str, Any] = field(default_factory=dict)
 
 
-MiddlewareOutcome = Continue | Reject
+@dataclass(frozen=True, slots=True)
+class Mutate:
+    """Signals the pipeline to rewrite the request body and continue.
+
+    ``replacements`` is an ordered list of ``(original, replacement)`` text
+    substitutions. The pipeline applies them to every textual field of the
+    request body — via the provider adapter, so that wire-format details
+    stay encapsulated. ``str.replace`` semantics apply: every occurrence is
+    rewritten, which is the safer bias (over-redaction never leaks).
+
+    A Mutate outcome leaves the pipeline contract intact: subsequent
+    middlewares see the rewritten envelope, and the final upstream call
+    receives the rewritten body.
+    """
+
+    replacements: tuple[tuple[str, str], ...]
+    annotations: Mapping[str, Any] = field(default_factory=dict)
+
+
+MiddlewareOutcome = Continue | Reject | Mutate
 """Algebraic outcome a middleware may produce."""

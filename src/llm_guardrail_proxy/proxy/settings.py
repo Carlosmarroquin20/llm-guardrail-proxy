@@ -65,6 +65,18 @@ class ProxySettings(BaseSettings):
     # the scanner is regex-only — there is no performance reason to disable it.
     enable_secret_scanning: bool = True
 
+    # PII scanning is default-off because it brings a heavyweight transitive
+    # dependency (Presidio + spaCy + a downloaded language model). Operators
+    # opt in explicitly after running the installation steps documented in
+    # README.md.
+    enable_pii_scanning: bool = False
+    # ``block`` refuses to forward when PII is present; ``redact`` rewrites
+    # the prompt and forwards the sanitised version. ``block`` is the safer
+    # default because redaction can occasionally lose meaning the user
+    # needed the model to see.
+    pii_policy: str = "block"
+    pii_score_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+
 
 def get_settings() -> ProxySettings:
     """Return a freshly-validated settings instance.

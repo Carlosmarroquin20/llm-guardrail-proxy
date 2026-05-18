@@ -18,6 +18,7 @@ from llm_guardrail_proxy.proxy.app import build_app, create_default_app
 from llm_guardrail_proxy.proxy.envelope import (
     Continue,
     MiddlewareOutcome,
+    Mutate,
     ParsedPrompt,
     Provider,
     ProxyRequest,
@@ -32,6 +33,7 @@ __all__ = [
     "Middleware",
     "MiddlewareOutcome",
     "MiddlewarePipeline",
+    "Mutate",
     "ParsedPrompt",
     "Provider",
     "ProxyRequest",

@@ -10,8 +10,8 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 |------:|---------------------------------------------------------------|:-------------:|
 |     1 | Tokenomics & Cost Foundation                                  | Complete      |
 |     2 | Async HTTP Reverse Proxy & Middleware Pipeline                | Complete      |
-|    3a | Content Guardrails — Secret Detection (regex catalogue)       | **Active**    |
-|    3b | Content Guardrails — PII Detection (Presidio)                 | Planned       |
+|    3a | Content Guardrails — Secret Detection (regex catalogue)       | Complete      |
+|    3b | Content Guardrails — PII Detection (Presidio, BLOCK / REDACT) | **Complete**  |
 |     4 | FinOps Observability & Audit Plane (structlog / OTel / DuckDB)| Planned       |
 |     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned       |
 
@@ -61,6 +61,23 @@ pytest
 The end-to-end tests drive the ASGI app in-process via `httpx.ASGITransport`
 and intercept upstream traffic with `httpx.MockTransport`; no socket is
 opened during the suite.
+
+### Enabling PII detection (optional extra)
+
+PII scanning is opt-in because Presidio + spaCy + the English model add
+~80 MB to the install. Enable it with:
+
+```powershell
+pip install -e ".[pii]"
+python -m spacy download en_core_web_sm
+$env:GUARDRAIL_ENABLE_PII_SCANNING = "true"
+$env:GUARDRAIL_PII_POLICY = "redact"      # or "block"
+python -m llm_guardrail_proxy
+```
+
+The PII test modules (`test_pii_*`, `test_proxy_app_phase3b`) auto-skip
+when Presidio or the spaCy model is missing, so the base CI stays green
+on minimal environments.
 
 ## License
 

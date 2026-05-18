@@ -27,6 +27,12 @@ dev = [
     "pytest-asyncio==0.24.0",
     "pytest-cov==5.0.0",
 ]
+# Phase 3b — Presidio-backed PII detection. Optional because of the
+# spaCy + language-model footprint (~80 MB total). Operators opt in via
+# ``pip install -e .[pii]`` followed by ``python -m spacy download en_core_web_sm``.
+pii = [
+    "presidio-analyzer==2.2.355",
+]
 
 [project.scripts]
 llm-guardrail-proxy = "llm_guardrail_proxy.__main__:main"

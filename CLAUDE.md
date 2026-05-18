@@ -12,18 +12,16 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 
 ## Phase status
 
-| Phase | Title                                                  | Status         |
-|------:|--------------------------------------------------------|:--------------:|
-|     1 | Tokenomics & Cost Foundation                           | Complete       |
-|     2 | Async HTTP Reverse Proxy & Middleware Pipeline         | Complete       |
-|    3a | Content Guardrails — Secret Detection (regex)          | **Base ready** |
-|    3b | Content Guardrails — PII Detection (Presidio)          | Pending        |
-|     4 | FinOps Observability & Audit Plane                     | Pending        |
-|     5 | CI/CD Distribution & Shift-Left Integration            | Pending        |
+| Phase | Title                                                  | Status     |
+|------:|--------------------------------------------------------|:----------:|
+|     1 | Tokenomics & Cost Foundation                           | Complete   |
+|     2 | Async HTTP Reverse Proxy & Middleware Pipeline         | Complete   |
+|    3a | Content Guardrails — Secret Detection (regex)          | Complete   |
+|    3b | Content Guardrails — PII Detection (Presidio)          | Complete   |
+|     4 | FinOps Observability & Audit Plane                     | Pending    |
+|     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
 Do **not** generate code for a future phase until the user explicitly asks.
-Phase 3b will likely require a `Mutate` outcome variant for in-place
-redaction; that variant is **not** yet declared — add it only when 3b lands.
 
 ## Layout
 
@@ -37,20 +35,22 @@ src/llm_guardrail_proxy/
   config/thresholds.py    Conservative default ThresholdPolicy.
   proxy/                  Async ASGI surface. Phase 2.
     settings.py           pydantic-settings, GUARDRAIL_* env prefix.
-    envelope.py           ProxyRequest, ParsedPrompt, Continue|Reject.
-    providers.py          OpenAI Chat + Anthropic Messages adapters.
+    envelope.py           ProxyRequest, ParsedPrompt, Continue|Reject|Mutate.
+    providers.py          OpenAI Chat + Anthropic adapters (parse + redact).
     middleware.py         Middleware Protocol (structural).
     middlewares/          Concrete pipeline links.
       secret_scan.py        Phase 3a: regex-based credential detector.
+      pii_scan.py           Phase 3b: Presidio PII detector (BLOCK/REDACT).
       tokenomics.py         Phase 2: Phase 1 service as a pipeline link.
-    pipeline.py           MiddlewarePipeline orchestrator.
+    pipeline.py           MiddlewarePipeline orchestrator + Mutate handling.
     circuit_breaker.py    CLOSED→OPEN→HALF_OPEN async breaker.
     forwarder.py          httpx streaming relay + hop-by-hop filter.
     app.py                FastAPI factory (build_app + create_default_app).
-    scanning/             Phase 3a content-scanning primitives.
+    scanning/             Content-scanning primitives.
       findings.py           Severity + ScanFinding value objects.
-      patterns.py           Curated SecretPattern catalogue.
-      secrets.py            SecretScanner driver.
+      patterns.py           Curated SecretPattern catalogue (Phase 3a).
+      secrets.py            SecretScanner driver (Phase 3a).
+      pii.py                PiiScanner (Phase 3b, lazy Presidio import).
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
 ```
@@ -63,8 +63,11 @@ tests/                    pytest suite, all in-process (no sockets).
 - **Frozen value objects.** `ProxyRequest`, `ParsedPrompt`, `EvaluationResult`,
   `CostEstimate`, `ThresholdPolicy` are immutable. Phase 4's audit plane
   depends on this.
-- **`Continue | Reject` sum-type** is the middleware outcome contract.
-  Phase 3 will *add* a `Mutate` variant; do not change the existing ones.
+- **`Continue | Reject | Mutate` sum-type** is the middleware outcome
+  contract. `Mutate` carries `replacements: tuple[tuple[str, str], ...]`;
+  the pipeline applies them via the resolved provider adapter's `redact`
+  method and threads the rewritten envelope forward. Do not change these
+  variants.
 - **Provider adapters are the only place** wire-format quirks live. Adding
   a provider = enum entry + adapter + registry line. Nothing else.
 - **Path-based dispatch, no wildcards.** Unknown paths → 404 from FastAPI
@@ -98,7 +101,10 @@ Virtual environment lives at **`.venv/`** (already created, Python 3.10.11).
 VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
-Last verified run: **108 passed, 0 failed, 0 warnings.**
+Last verified runs:
+- **Without Presidio:** 118 passed, 3 skipped (~2 s).
+- **With `[pii]` extra + spaCy model:** 139 passed (~3 min — Presidio cold
+  start dominates).
 
 ## Gotchas worth remembering
 
@@ -126,6 +132,20 @@ Last verified run: **108 passed, 0 failed, 0 warnings.**
 - **`ScanFinding.preview` never carries the full secret.** `_redact` keeps
   a 4-char prefix and 2-char suffix only. Auditing the full match would
   re-leak it through the diagnostic plane — the whole point of the scanner.
+- **PII scanning is opt-in.** `enable_pii_scanning` defaults to False
+  because Presidio + spaCy + the en_core_web_sm model add ~80 MB. Test
+  modules `test_pii_*` and `test_proxy_app_phase3b` `pytest.importorskip`
+  on Presidio AND `spacy.load("en_core_web_sm")` so the base suite stays
+  green on minimal environments.
+- **`PiiScanner` lazy-imports Presidio inside `__init__`.** This is
+  deliberate: importing the module must never fail when Presidio is
+  absent — only instantiating the scanner does, via `MissingPiiBackend`.
+- **Pipeline order is secret → pii → tokenomics.** Security verdicts
+  outrank FinOps; among security verdicts, secrets outrank PII because
+  leaked credentials cannot be safely redacted in place.
+- **Redaction uses `str.replace` semantics:** every occurrence is rewritten.
+  Over-redaction is benign; under-redaction is a leak. Do not "optimise" to
+  replace only the matched span.
 
 ## What NOT to do
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 from llm_guardrail_proxy.proxy.envelope import ParsedPrompt, Provider
 from llm_guardrail_proxy.proxy.exceptions import (
@@ -29,11 +29,21 @@ from llm_guardrail_proxy.proxy.exceptions import (
 
 
 class ProviderAdapter(Protocol):
-    """Strategy for translating a raw request body into a ``ParsedPrompt``."""
+    """Strategy for translating a raw request body into a ``ParsedPrompt``.
+
+    The adapter is also responsible for the *inverse* operation
+    (:meth:`redact`): producing rewritten bytes that the forwarder can ship
+    upstream. Keeping both directions in one type ensures wire-format
+    knowledge stays in a single module.
+    """
 
     provider: Provider
 
     def parse(self, body: bytes) -> ParsedPrompt: ...
+
+    def redact(
+        self, body: bytes, replacements: Sequence[tuple[str, str]]
+    ) -> bytes: ...
 
 
 # ---------------------------------------------------------------- helpers
@@ -111,6 +121,23 @@ class OpenAIChatAdapter:
         content = "\n".join(_iter_message_text(messages))
         return ParsedPrompt(provider=self.provider, model=model, content=content)
 
+    def redact(
+        self, body: bytes, replacements: Sequence[tuple[str, str]]
+    ) -> bytes:
+        payload = dict(_decode_json(body))
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            payload["messages"] = [
+                {**msg, "content": _redact_content_field(msg.get("content"), replacements)}
+                if isinstance(msg, dict)
+                else msg
+                for msg in messages
+            ]
+        # ``ensure_ascii=False`` preserves non-ASCII characters byte-for-byte
+        # instead of escaping them; some upstreams treat the escaped form as
+        # a semantically different payload.
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
 
 @dataclass(frozen=True, slots=True)
 class AnthropicMessagesAdapter:
@@ -147,6 +174,25 @@ class AnthropicMessagesAdapter:
             content="\n".join(p for p in parts if p),
         )
 
+    def redact(
+        self, body: bytes, replacements: Sequence[tuple[str, str]]
+    ) -> bytes:
+        payload = dict(_decode_json(body))
+
+        system = payload.get("system")
+        if isinstance(system, (str, list)):
+            payload["system"] = _redact_content_field(system, replacements)
+
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            payload["messages"] = [
+                {**msg, "content": _redact_content_field(msg.get("content"), replacements)}
+                if isinstance(msg, dict)
+                else msg
+                for msg in messages
+            ]
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
 
 def _iter_message_text(messages: Iterable[Any]) -> list[str]:
     """Project a chat-message array onto its textual content."""
@@ -159,6 +205,47 @@ def _iter_message_text(messages: Iterable[Any]) -> list[str]:
         if text:
             out.append(text)
     return out
+
+
+def _apply_replacements(text: str, replacements: Sequence[tuple[str, str]]) -> str:
+    """Apply every ``(original, new)`` substitution to ``text`` in order.
+
+    Uses ``str.replace`` so each pair rewrites all occurrences — under-
+    redaction is the dangerous failure mode, over-redaction is benign.
+    """
+
+    for original, new in replacements:
+        if original:
+            text = text.replace(original, new)
+    return text
+
+
+def _redact_content_field(
+    content: Any, replacements: Sequence[tuple[str, str]]
+) -> Any:
+    """Rewrite a ``content`` field in place, preserving its original shape.
+
+    OpenAI and Anthropic both allow either a plain string or a list of typed
+    parts. The shape must round-trip unchanged: rewriting a string into a
+    list (or vice versa) would alter the upstream's understanding of the
+    request and is therefore avoided.
+    """
+
+    if isinstance(content, str):
+        return _apply_replacements(content, replacements)
+    if isinstance(content, list):
+        rewritten: list[Any] = []
+        for part in content:
+            if isinstance(part, str):
+                rewritten.append(_apply_replacements(part, replacements))
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                rewritten.append(
+                    {**part, "text": _apply_replacements(part["text"], replacements)}
+                )
+            else:
+                rewritten.append(part)
+        return rewritten
+    return content
 
 
 # ---------------------------------------------------------------- dispatch

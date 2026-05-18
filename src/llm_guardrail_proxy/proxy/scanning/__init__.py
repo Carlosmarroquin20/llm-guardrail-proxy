@@ -14,10 +14,20 @@ from llm_guardrail_proxy.proxy.scanning.patterns import (
     DEFAULT_SECRET_PATTERNS,
     SecretPattern,
 )
+from llm_guardrail_proxy.proxy.scanning.pii import (
+    DEFAULT_PII_ENTITIES,
+    DEFAULT_SCORE_THRESHOLD,
+    MissingPiiBackend,
+    PiiScanner,
+)
 from llm_guardrail_proxy.proxy.scanning.secrets import SecretScanner
 
 __all__ = [
+    "DEFAULT_PII_ENTITIES",
+    "DEFAULT_SCORE_THRESHOLD",
     "DEFAULT_SECRET_PATTERNS",
+    "MissingPiiBackend",
+    "PiiScanner",
     "ScanFinding",
     "SecretPattern",
     "SecretScanner",

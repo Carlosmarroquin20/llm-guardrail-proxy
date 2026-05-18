@@ -20,7 +20,6 @@ from fastapi.responses import JSONResponse, Response
 from llm_guardrail_proxy.core import ThresholdPolicy, TokenomicsService
 from llm_guardrail_proxy.proxy.circuit_breaker import CircuitBreaker
 from llm_guardrail_proxy.proxy.envelope import (
-    Continue,
     Provider,
     ProxyRequest,
     Reject,
@@ -33,12 +32,14 @@ from llm_guardrail_proxy.proxy.exceptions import (
 from llm_guardrail_proxy.proxy.forwarder import UpstreamForwarder
 from llm_guardrail_proxy.proxy.middleware import Middleware
 from llm_guardrail_proxy.proxy.middlewares import (
+    PiiPolicy,
+    PiiScanMiddleware,
     SecretScanMiddleware,
     TokenomicsMiddleware,
 )
 from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
 from llm_guardrail_proxy.proxy.providers import resolve_adapter, supported_paths
-from llm_guardrail_proxy.proxy.scanning import SecretScanner
+from llm_guardrail_proxy.proxy.scanning import PiiScanner, SecretScanner
 from llm_guardrail_proxy.proxy.settings import ProxySettings
 
 _LOGGER = logging.getLogger("llm_guardrail_proxy")
@@ -138,10 +139,11 @@ async def _handle_proxied_request(request: Request) -> Response:
             },
         )
 
-    assert isinstance(decision.outcome, Continue)  # narrowing for mypy/readers
-
+    # ``final_request`` may differ from ``envelope`` if a middleware emitted
+    # ``Mutate`` — the forwarder must ship the rewritten body, not the
+    # original.
     try:
-        return await forwarder.forward(envelope)
+        return await forwarder.forward(decision.final_request)
     except UpstreamError as exc:
         # 502 — upstream returned no usable response, or the breaker is open.
         return JSONResponse(
@@ -165,12 +167,22 @@ def create_default_app() -> FastAPI:
         max_cost_usd=settings.max_prompt_cost_usd,
     )
 
-    # Pipeline order is significant. Secret detection runs first so that a
-    # leaked credential is surfaced even when the prompt would also have
-    # violated a cost ceiling: security-class verdicts outrank FinOps ones.
+    # Pipeline order is significant. Security-class verdicts (secret then
+    # PII) run before the FinOps verdict so that a leaked credential or PII
+    # value is surfaced even when the prompt would also have violated a
+    # cost ceiling. PII follows secrets because a credential leak is
+    # categorically worse: PII can sometimes be redacted in-place, but a
+    # leaked API key cannot.
     middlewares: list[Middleware] = []
     if settings.enable_secret_scanning:
         middlewares.append(SecretScanMiddleware(scanner=SecretScanner()))
+    if settings.enable_pii_scanning:
+        middlewares.append(
+            PiiScanMiddleware(
+                scanner=PiiScanner(score_threshold=settings.pii_score_threshold),
+                policy=PiiPolicy(settings.pii_policy),
+            )
+        )
     middlewares.append(TokenomicsMiddleware(service=service, policy=policy))
     pipeline = MiddlewarePipeline(middlewares)
 
