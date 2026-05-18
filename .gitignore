@@ -61,3 +61,5 @@ Thumbs.db
 *.log
 *.sqlite
 *.duckdb
+# Runtime artefacts (audit dumps, ad-hoc state)
+var/

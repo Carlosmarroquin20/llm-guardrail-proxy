@@ -64,6 +64,16 @@ The end-to-end tests drive the ASGI app in-process via `httpx.ASGITransport`
 and intercept upstream traffic with `httpx.MockTransport`; no socket is
 opened during the suite.
 
+For a real-server validation (boots a uvicorn child, sends live requests,
+inspects the JSONL audit ledger), use the Phase 4a smoke script:
+
+```powershell
+python scripts/smoke_phase4.py
+```
+
+The script terminates the child process automatically and asserts that
+the audit plane upholds its non-leakage contract against a real socket.
+
 ### Enabling PII detection (optional extra)
 
 PII scanning is opt-in because Presidio + spaCy + the English model add
