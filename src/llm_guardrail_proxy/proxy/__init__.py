@@ -15,6 +15,14 @@ middleware without touching the orchestrator.
 """
 
 from llm_guardrail_proxy.proxy.app import build_app, create_default_app
+from llm_guardrail_proxy.proxy.audit import (
+    AuditRecord,
+    AuditSink,
+    EnforcementVerdict,
+    InMemoryAuditSink,
+    JsonlAuditSink,
+    NullAuditSink,
+)
 from llm_guardrail_proxy.proxy.envelope import (
     Continue,
     MiddlewareOutcome,
@@ -29,11 +37,17 @@ from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
 from llm_guardrail_proxy.proxy.settings import ProxySettings
 
 __all__ = [
+    "AuditRecord",
+    "AuditSink",
     "Continue",
+    "EnforcementVerdict",
+    "InMemoryAuditSink",
+    "JsonlAuditSink",
     "Middleware",
     "MiddlewareOutcome",
     "MiddlewarePipeline",
     "Mutate",
+    "NullAuditSink",
     "ParsedPrompt",
     "Provider",
     "ProxyRequest",

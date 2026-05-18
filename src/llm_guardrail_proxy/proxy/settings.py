@@ -77,6 +77,21 @@ class ProxySettings(BaseSettings):
     pii_policy: str = "block"
     pii_score_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
 
+    # --- FinOps audit plane (Phase 4) -----------------------------------
+
+    # Default-on with the in-memory sink: an observable proxy is the
+    # baseline expectation. Operators that explicitly need a no-op sink
+    # set ``audit_enabled=false``.
+    audit_enabled: bool = True
+    # When set, records are appended to this JSONL file in addition to
+    # the in-memory ring. ``None`` keeps audit purely in-memory.
+    audit_jsonl_path: str | None = None
+    # Size of the in-memory ring buffer used by the stats endpoint
+    # (Phase 4c). Tuned so memory cost stays bounded even on long-lived
+    # workers — a worker pinned at 100 RPS for an hour produces 360k
+    # records, but only the most recent ``audit_memory_capacity`` are kept.
+    audit_memory_capacity: Annotated[int, Field(gt=0)] = 1_000
+
 
 def get_settings() -> ProxySettings:
     """Return a freshly-validated settings instance.

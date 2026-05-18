@@ -18,7 +18,9 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |     2 | Async HTTP Reverse Proxy & Middleware Pipeline         | Complete   |
 |    3a | Content Guardrails — Secret Detection (regex)          | Complete   |
 |    3b | Content Guardrails — PII Detection (Presidio)          | Complete   |
-|     4 | FinOps Observability & Audit Plane                     | Pending    |
+|    4a | FinOps Audit — Record schema + AuditSink (mem, JSONL)  | Complete   |
+|    4b | FinOps — structlog, OTel, DuckDB sink                  | Pending    |
+|    4c | FinOps — Read-only /stats endpoint                     | Pending    |
 |     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
 Do **not** generate code for a future phase until the user explicitly asks.
@@ -51,6 +53,9 @@ src/llm_guardrail_proxy/
       patterns.py           Curated SecretPattern catalogue (Phase 3a).
       secrets.py            SecretScanner driver (Phase 3a).
       pii.py                PiiScanner (Phase 3b, lazy Presidio import).
+    audit/                FinOps audit plane (Phase 4a).
+      records.py            AuditRecord schema + build_audit_record.
+      sinks.py              AuditSink Protocol + Null/InMemory/Jsonl impls.
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
 ```
@@ -102,9 +107,9 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 118 passed, 3 skipped (~2 s).
-- **With `[pii]` extra + spaCy model:** 139 passed (~3 min — Presidio cold
-  start dominates).
+- **Without Presidio:** 146 passed, 3 skipped (~3 s).
+- **With `[pii]` extra + spaCy model:** 167 passed (~15 s warm,
+  ~3 min cold — Presidio first-load dominates the cold path).
 
 ## Gotchas worth remembering
 
@@ -146,6 +151,28 @@ Last verified runs:
 - **Redaction uses `str.replace` semantics:** every occurrence is rewritten.
   Over-redaction is benign; under-redaction is a leak. Do not "optimise" to
   replace only the matched span.
+- **Audit is transport-layer, not middleware-layer.** Recording happens
+  inside `_handle_proxied_request` in `app.py`, not in a middleware,
+  because audit needs the `upstream_status_code` and total latency that no
+  single middleware can observe. Don't try to refactor it into a "logging
+  middleware" — the pipeline contract has no terminal hook.
+- **`AuditRecord` never carries raw prompts or full secret/PII values.**
+  Only redacted previews emitted by the scanners. If you add a new field
+  that could plausibly carry sensitive content, the audit plane has to be
+  reviewed end-to-end before merging.
+- **Audit is recorded on every terminating path:** rejection, upstream
+  failure, success. Exactly one record per request. Pre-parse failures
+  (404 / 400 malformed body) deliberately skip audit — no model, no
+  provider, nothing meaningful to write.
+- **`X-Request-Id` is honoured if inbound and well-formed.** Malformed
+  values are silently replaced with a fresh UUID — the proxy never 400s
+  on a bad header. The header is always echoed on the response.
+- **Latency captured is decision-plus-headers, not body-stream.** FinOps
+  cares about cost (already known at decision time) and verdict; full-body
+  latency would require holding the response open. Documented in `app.py`.
+- **`PipelineDecision.final_request` is the source of truth for forwarding
+  and for `mutations_applied`.** When `final_request is request`, no
+  middleware mutated the envelope; record this as `mutations_applied=False`.
 
 ## What NOT to do
 
