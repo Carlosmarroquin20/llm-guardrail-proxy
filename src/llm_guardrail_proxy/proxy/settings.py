@@ -59,6 +59,12 @@ class ProxySettings(BaseSettings):
     max_prompt_cost_usd: Annotated[Decimal, Field(gt=Decimal("0"))] = Decimal("0.05")
     allow_unknown_models: bool = True
 
+    # --- Content guardrails (Phase 3) -----------------------------------
+
+    # Default-on: the project's whole purpose is to refuse data egress, and
+    # the scanner is regex-only — there is no performance reason to disable it.
+    enable_secret_scanning: bool = True
+
 
 def get_settings() -> ProxySettings:
     """Return a freshly-validated settings instance.

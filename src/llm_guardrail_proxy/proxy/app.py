@@ -32,9 +32,13 @@ from llm_guardrail_proxy.proxy.exceptions import (
 )
 from llm_guardrail_proxy.proxy.forwarder import UpstreamForwarder
 from llm_guardrail_proxy.proxy.middleware import Middleware
-from llm_guardrail_proxy.proxy.middlewares import TokenomicsMiddleware
+from llm_guardrail_proxy.proxy.middlewares import (
+    SecretScanMiddleware,
+    TokenomicsMiddleware,
+)
 from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
 from llm_guardrail_proxy.proxy.providers import resolve_adapter, supported_paths
+from llm_guardrail_proxy.proxy.scanning import SecretScanner
 from llm_guardrail_proxy.proxy.settings import ProxySettings
 
 _LOGGER = logging.getLogger("llm_guardrail_proxy")
@@ -161,9 +165,13 @@ def create_default_app() -> FastAPI:
         max_cost_usd=settings.max_prompt_cost_usd,
     )
 
-    middlewares: list[Middleware] = [
-        TokenomicsMiddleware(service=service, policy=policy),
-    ]
+    # Pipeline order is significant. Secret detection runs first so that a
+    # leaked credential is surfaced even when the prompt would also have
+    # violated a cost ceiling: security-class verdicts outrank FinOps ones.
+    middlewares: list[Middleware] = []
+    if settings.enable_secret_scanning:
+        middlewares.append(SecretScanMiddleware(scanner=SecretScanner()))
+    middlewares.append(TokenomicsMiddleware(service=service, policy=policy))
     pipeline = MiddlewarePipeline(middlewares)
 
     client = httpx.AsyncClient(timeout=settings.upstream_timeout_seconds)

@@ -6,13 +6,14 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 
 ## Architectural Phases
 
-| Phase | Title                                                         | Status     |
-|------:|---------------------------------------------------------------|:----------:|
-|     1 | Tokenomics & Cost Foundation                                  | Complete   |
-|     2 | Async HTTP Reverse Proxy & Middleware Pipeline                | **Active** |
-|     3 | Content Guardrails — PII & Secret Detection (Presidio)        | Planned    |
-|     4 | FinOps Observability & Audit Plane (structlog / OTel / DuckDB)| Planned    |
-|     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned    |
+| Phase | Title                                                         | Status        |
+|------:|---------------------------------------------------------------|:-------------:|
+|     1 | Tokenomics & Cost Foundation                                  | Complete      |
+|     2 | Async HTTP Reverse Proxy & Middleware Pipeline                | Complete      |
+|    3a | Content Guardrails — Secret Detection (regex catalogue)       | **Active**    |
+|    3b | Content Guardrails — PII Detection (Presidio)                 | Planned       |
+|     4 | FinOps Observability & Audit Plane (structlog / OTel / DuckDB)| Planned       |
+|     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned       |
 
 ## Phase 2 — Async Reverse Proxy
 
