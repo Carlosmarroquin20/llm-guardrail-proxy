@@ -14,7 +14,9 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 |    3b | Content Guardrails — PII Detection (Presidio, BLOCK / REDACT) | Complete      |
 |    4a | FinOps Audit Plane — Record schema + sinks (in-memory, JSONL) | Complete      |
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | Complete      |
-|    4c | FinOps — Read-only `/stats/summary` and `/stats/recent`       | **Complete**  |
+|    4c | FinOps — Read-only `/stats/summary` and `/stats/recent`       | Complete      |
+|    5a | CI/CD — Shift-left CLI (`llm-guardrail-scan`)                 | **Complete**  |
+|    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | Planned       |
 |   4b' | FinOps — OpenTelemetry traces                                 | Planned       |
 |     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned       |
 
@@ -74,6 +76,30 @@ python scripts/smoke_phase4.py
 
 The script terminates the child process automatically and asserts that
 the audit plane upholds its non-leakage contract against a real socket.
+
+### Shift-left scanning (`llm-guardrail-scan`)
+
+The same guardrail pipeline is exposed as a one-shot CLI for use in
+pre-commit hooks and CI gates. It returns exit `0` on clean input,
+`1` on a rejection, and `2` on malformed input.
+
+```powershell
+# Scan a prompt file (provider is auto-detected).
+llm-guardrail-scan --file prompts/agent.json
+
+# Scan a literal string, JSON output.
+llm-guardrail-scan --text "summarise this" --model gpt-4o
+
+# Pipe stdin.
+Get-Content prompts/agent.txt | llm-guardrail-scan --model gpt-4o
+
+# Enable tokenomics + PII (PII requires the [pii] extra).
+llm-guardrail-scan --file prompts/agent.json --tokens --max-tokens 8000 --pii
+```
+
+Defaults are deliberately permissive on tokenomics and PII so commit-
+time false positives don't train developers to bypass the hook;
+`secret_scan` is the only check enabled out of the box.
 
 ### Enabling PII detection (optional extra)
 

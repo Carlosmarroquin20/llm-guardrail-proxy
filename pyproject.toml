@@ -42,6 +42,7 @@ duckdb = [
 
 [project.scripts]
 llm-guardrail-proxy = "llm_guardrail_proxy.__main__:main"
+llm-guardrail-scan = "llm_guardrail_proxy.cli.scan:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

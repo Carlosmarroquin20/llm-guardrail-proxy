@@ -21,6 +21,8 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |    4a | FinOps Audit — Record schema + AuditSink (mem, JSONL)  | Complete   |
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out   | Complete   |
 |    4c | FinOps — Read-only /stats/summary + /stats/recent      | Complete   |
+|    5a | CI/CD — Shift-left CLI (llm-guardrail-scan)            | Complete   |
+|    5b | CI/CD — pre-commit + reusable GH Actions workflow      | Pending    |
 |   4b' | FinOps — OpenTelemetry traces                          | Pending    |
 |     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
@@ -63,6 +65,10 @@ src/llm_guardrail_proxy/
     stats/                  Read-side query surface (Phase 4c).
       repository.py         StatsRepository Protocol + summarise aggregator.
       router.py             FastAPI router for /stats/summary + /stats/recent.
+  cli/                    Shift-left CLI (Phase 5a).
+    scan.py                 main(argv) + cli() console-script entry.
+    formatters.py           JSON / text output renderers.
+    __main__.py             Enables ``python -m llm_guardrail_proxy.cli``.
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
 ```
@@ -114,14 +120,17 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 183 passed, 3 skipped (~11 s).
-- **With `[pii]` extra + spaCy model:** 204 passed (~45 s warm).
+- **Without Presidio:** 198 passed, 3 skipped (~7 s).
+- **With `[pii]` extra + spaCy model:** 219 passed (~52 s warm).
 - **Smoke scripts:**
   - `scripts/smoke_phase4.py` — single sink JSONL end-to-end.
   - `scripts/smoke_phase4b.py` — composite (JSONL + DuckDB + structlog)
     fan-out + cross-sink request_id consistency + no-re-leakage.
   - `scripts/smoke_phase4c.py` — /stats/summary and /stats/recent against
     a real uvicorn process with a synthetic rejection workload.
+  - `scripts/smoke_phase5.py` — CLI subprocess against four fixtures
+    (clean / leak / tokenomics / malformed) — verifies exit-code
+    contract and the no-re-leakage invariant on stdout/stderr.
 
 ## Gotchas worth remembering
 
@@ -216,6 +225,23 @@ Last verified runs:
   serialises to a JSON string by Pydantic default. Tests assert against
   the string form because `float(...)` round-trip would defeat the
   no-float-drift contract.
+- **The CLI ignores `GUARDRAIL_*` environment variables on purpose.**
+  Flags are the only configuration surface — a pre-commit hook whose
+  behaviour drifts with the developer's shell becomes unreproducible
+  and gets bypassed. Server settings stay server-side.
+- **CLI defaults differ from server defaults.** Only `secret_scan`
+  runs by default; `--tokens` and `--pii` are opt-in. Commit-time
+  false positives train developers to add `--no-verify`; precision
+  beats recall for shift-left.
+- **CLI exit-code contract: `0` clean, `1` rejected, `2` input error.**
+  Constants live in `cli/scan.py`. Pre-commit hooks and CI gates pivot
+  on these — do not introduce new codes without bumping the major.
+- **Two console scripts, two purposes.** `llm-guardrail-proxy` launches
+  uvicorn (server). `llm-guardrail-scan` runs the one-shot scan
+  (shift-left). Do not unify them — the operational contexts diverge.
+- **`python -m llm_guardrail_proxy.cli` is the portable entry point.**
+  The console script may not be on PATH right after an editable
+  install; tests and smoke scripts use the `-m` form for that reason.
 
 ## What NOT to do
 
