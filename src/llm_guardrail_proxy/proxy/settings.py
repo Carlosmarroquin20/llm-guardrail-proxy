@@ -111,6 +111,13 @@ class ProxySettings(BaseSettings):
     # the extra.
     audit_duckdb_path: str | None = None
 
+    # --- Stats endpoint (Phase 4c) --------------------------------------
+
+    # Read-only ``/stats/*`` surface backed by the in-memory ring. Default-
+    # on because the proxy binds to localhost; operators exposing the
+    # proxy externally should set this to false (or front it with auth).
+    enable_stats_endpoint: bool = True
+
 
 def get_settings() -> ProxySettings:
     """Return a freshly-validated settings instance.

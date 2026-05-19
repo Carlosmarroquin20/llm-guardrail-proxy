@@ -13,9 +13,9 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 |    3a | Content Guardrails — Secret Detection (regex catalogue)       | Complete      |
 |    3b | Content Guardrails — PII Detection (Presidio, BLOCK / REDACT) | Complete      |
 |    4a | FinOps Audit Plane — Record schema + sinks (in-memory, JSONL) | Complete      |
-|    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | **Complete**  |
+|    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | Complete      |
+|    4c | FinOps — Read-only `/stats/summary` and `/stats/recent`       | **Complete**  |
 |   4b' | FinOps — OpenTelemetry traces                                 | Planned       |
-|    4c | FinOps — Read-only `/stats` endpoint                          | Planned       |
 |     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned       |
 
 ## Phase 2 — Async Reverse Proxy

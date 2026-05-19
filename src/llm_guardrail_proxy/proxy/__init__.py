@@ -39,6 +39,7 @@ from llm_guardrail_proxy.proxy.envelope import (
 from llm_guardrail_proxy.proxy.middleware import Middleware
 from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
 from llm_guardrail_proxy.proxy.settings import ProxySettings
+from llm_guardrail_proxy.proxy.stats import StatsRepository, StatsSummary, summarise
 
 __all__ = [
     "AuditRecord",
@@ -60,7 +61,10 @@ __all__ = [
     "ProxyRequest",
     "ProxySettings",
     "Reject",
+    "StatsRepository",
+    "StatsSummary",
     "build_app",
     "configure_logging",
     "create_default_app",
+    "summarise",
 ]

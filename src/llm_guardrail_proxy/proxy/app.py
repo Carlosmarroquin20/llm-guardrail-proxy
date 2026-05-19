@@ -54,6 +54,7 @@ from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline, PipelineDecis
 from llm_guardrail_proxy.proxy.providers import resolve_adapter, supported_paths
 from llm_guardrail_proxy.proxy.scanning import PiiScanner, SecretScanner
 from llm_guardrail_proxy.proxy.settings import ProxySettings
+from llm_guardrail_proxy.proxy.stats import StatsRepository, build_stats_router
 
 _LOGGER = logging.getLogger("llm_guardrail_proxy")
 
@@ -69,6 +70,7 @@ def build_app(
     pipeline: MiddlewarePipeline,
     forwarder: UpstreamForwarder,
     audit_sink: AuditSink | None = None,
+    stats_repository: StatsRepository | None = None,
 ) -> FastAPI:
     """Construct a fully-wired FastAPI application.
 
@@ -78,8 +80,11 @@ def build_app(
     the test fixture.
 
     ``audit_sink`` defaults to a :class:`NullAuditSink` so callers that do
-    not care about Phase 4 observability are not forced to construct one;
-    :func:`create_default_app` wires the production sink stack.
+    not care about Phase 4 observability are not forced to construct one.
+    ``stats_repository`` controls whether the read-only ``/stats/*``
+    surface is mounted: when ``None``, the router is not added — callers
+    that disable auditing or that build the app for the pre-commit hook
+    have no reason to expose query endpoints.
     """
 
     sink: AuditSink = audit_sink if audit_sink is not None else NullAuditSink()
@@ -103,6 +108,10 @@ def build_app(
     app.state.pipeline = pipeline
     app.state.forwarder = forwarder
     app.state.audit_sink = sink
+    app.state.stats_repository = stats_repository
+
+    if stats_repository is not None and settings.enable_stats_endpoint:
+        app.include_router(build_stats_router(stats_repository))
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:
@@ -297,22 +306,26 @@ async def _record_audit(
 # ----------------------------------------------------- production wiring
 
 
-def _build_audit_sink(settings: ProxySettings) -> AuditSink:
+def _build_audit_sink(
+    settings: ProxySettings,
+) -> tuple[AuditSink, InMemoryAuditSink | None]:
     """Translate ``settings`` into a concrete sink (or composite of sinks).
 
-    The in-memory ring is *always* present when auditing is enabled: it
-    backs the Phase 4c stats endpoint, and its cost is bounded by
-    ``audit_memory_capacity``. Additional destinations (JSONL, DuckDB,
-    structlog) are layered on top via :class:`CompositeAuditSink`, which
-    isolates per-sink failures from the in-flight request.
+    Returns the user-facing :class:`AuditSink` (which may be a composite)
+    *and* a direct handle to the in-memory ring that the stats endpoint
+    consumes. The two are split so the route layer never has to inspect
+    the structure of a composite to find the readable component — a
+    coupling that would defeat the Protocol-based design.
+
+    When auditing is disabled the ring handle is ``None``; the stats
+    router is then not mounted by :func:`build_app`.
     """
 
     if not settings.audit_enabled:
-        return NullAuditSink()
+        return NullAuditSink(), None
 
-    sinks: list[AuditSink] = [
-        InMemoryAuditSink(capacity=settings.audit_memory_capacity),
-    ]
+    memory_sink = InMemoryAuditSink(capacity=settings.audit_memory_capacity)
+    sinks: list[AuditSink] = [memory_sink]
     if settings.audit_log_enabled:
         sinks.append(LoggingAuditSink())
     if settings.audit_jsonl_path:
@@ -320,9 +333,8 @@ def _build_audit_sink(settings: ProxySettings) -> AuditSink:
     if settings.audit_duckdb_path:
         sinks.append(DuckdbAuditSink(settings.audit_duckdb_path))
 
-    if len(sinks) == 1:
-        return sinks[0]
-    return CompositeAuditSink(sinks)
+    composite: AuditSink = sinks[0] if len(sinks) == 1 else CompositeAuditSink(sinks)
+    return composite, memory_sink
 
 
 def create_default_app() -> FastAPI:
@@ -383,9 +395,11 @@ def create_default_app() -> FastAPI:
         },
     )
 
+    audit_sink, memory_sink = _build_audit_sink(settings)
     return build_app(
         settings=settings,
         pipeline=pipeline,
         forwarder=forwarder,
-        audit_sink=_build_audit_sink(settings),
+        audit_sink=audit_sink,
+        stats_repository=memory_sink,
     )

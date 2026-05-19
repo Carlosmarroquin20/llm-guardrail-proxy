@@ -20,8 +20,8 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |    3b | Content Guardrails — PII Detection (Presidio)          | Complete   |
 |    4a | FinOps Audit — Record schema + AuditSink (mem, JSONL)  | Complete   |
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out   | Complete   |
+|    4c | FinOps — Read-only /stats/summary + /stats/recent      | Complete   |
 |   4b' | FinOps — OpenTelemetry traces                          | Pending    |
-|    4c | FinOps — Read-only /stats endpoint                     | Pending    |
 |     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
 Do **not** generate code for a future phase until the user explicitly asks.
@@ -60,6 +60,9 @@ src/llm_guardrail_proxy/
       composite.py          Fan-out sink with isolated failure semantics.
       logging_sink.py       structlog sink + configure_logging helper.
       duckdb_sink.py        DuckDB sink (lazy import, [duckdb] extra).
+    stats/                  Read-side query surface (Phase 4c).
+      repository.py         StatsRepository Protocol + summarise aggregator.
+      router.py             FastAPI router for /stats/summary + /stats/recent.
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
 ```
@@ -111,12 +114,14 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 164 passed, 3 skipped (~6 s).
-- **With `[pii]` extra + spaCy model:** 185 passed (~36 s warm).
+- **Without Presidio:** 183 passed, 3 skipped (~11 s).
+- **With `[pii]` extra + spaCy model:** 204 passed (~45 s warm).
 - **Smoke scripts:**
   - `scripts/smoke_phase4.py` — single sink JSONL end-to-end.
   - `scripts/smoke_phase4b.py` — composite (JSONL + DuckDB + structlog)
     fan-out + cross-sink request_id consistency + no-re-leakage.
+  - `scripts/smoke_phase4c.py` — /stats/summary and /stats/recent against
+    a real uvicorn process with a synthetic rejection workload.
 
 ## Gotchas worth remembering
 
@@ -197,6 +202,20 @@ Last verified runs:
 - **DuckDB sink is opt-in via the `[duckdb]` extra.** Lazy-import in
   `__init__` raises `MissingAuditBackend` when the wheel is absent.
   `test_audit_duckdb_sink` uses `pytest.importorskip`.
+- **Stats router reads via `StatsRepository`, not via the audit sink.**
+  `_build_audit_sink` returns `(composite, memory_sink)`; the memory
+  sink is passed as both the write target (inside the composite) and
+  the read target (as `stats_repository`). Do not collapse those into
+  one parameter — Phase 4d may swap in a DuckDB-backed read repository
+  while keeping the same write composite.
+- **`/stats/*` is default-on because the proxy binds to localhost.**
+  Operators exposing the proxy externally must set
+  `enable_stats_endpoint=false` (or front the route with auth) — the
+  endpoint surfaces findings previews and cost data.
+- **`StatsSummary.total_estimated_cost_usd` is `Decimal`.** It
+  serialises to a JSON string by Pydantic default. Tests assert against
+  the string form because `float(...)` round-trip would defeat the
+  no-float-drift contract.
 
 ## What NOT to do
 
