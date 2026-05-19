@@ -92,6 +92,25 @@ class ProxySettings(BaseSettings):
     # records, but only the most recent ``audit_memory_capacity`` are kept.
     audit_memory_capacity: Annotated[int, Field(gt=0)] = 1_000
 
+    # --- Structured logging (Phase 4b) ----------------------------------
+
+    # Default-on: a proxy whose audit ledger is invisible at process level
+    # is operationally useless. Disable only for tests that assert log
+    # silence.
+    audit_log_enabled: bool = True
+    # ``json`` is the production renderer; ``console`` is the colourised
+    # interactive one used during development.
+    log_format: str = "json"
+    log_level: str = "INFO"
+
+    # --- DuckDB audit sink (Phase 4b, optional [duckdb] extra) ----------
+
+    # When set, records are persisted to this DuckDB file in addition to
+    # any other configured sinks. ``None`` skips loading the duckdb
+    # backend entirely — important on environments that did not install
+    # the extra.
+    audit_duckdb_path: str | None = None
+
 
 def get_settings() -> ProxySettings:
     """Return a freshly-validated settings instance.

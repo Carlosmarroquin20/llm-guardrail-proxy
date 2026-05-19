@@ -15,6 +15,15 @@ request. Three properties matter:
   endpoint) will query whichever sink the deployment configured.
 """
 
+from llm_guardrail_proxy.proxy.audit.composite import CompositeAuditSink
+from llm_guardrail_proxy.proxy.audit.duckdb_sink import (
+    DuckdbAuditSink,
+    MissingAuditBackend,
+)
+from llm_guardrail_proxy.proxy.audit.logging_sink import (
+    LoggingAuditSink,
+    configure_logging,
+)
 from llm_guardrail_proxy.proxy.audit.records import (
     AuditRecord,
     EnforcementVerdict,
@@ -32,11 +41,16 @@ from llm_guardrail_proxy.proxy.audit.sinks import (
 __all__ = [
     "AuditRecord",
     "AuditSink",
+    "CompositeAuditSink",
+    "DuckdbAuditSink",
     "EnforcementVerdict",
     "FindingRecord",
     "InMemoryAuditSink",
     "JsonlAuditSink",
+    "LoggingAuditSink",
+    "MissingAuditBackend",
     "NullAuditSink",
     "build_audit_record",
+    "configure_logging",
     "findings_from_pipeline",
 ]

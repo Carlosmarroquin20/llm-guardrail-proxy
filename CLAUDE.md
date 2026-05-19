@@ -19,7 +19,8 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |    3a | Content Guardrails — Secret Detection (regex)          | Complete   |
 |    3b | Content Guardrails — PII Detection (Presidio)          | Complete   |
 |    4a | FinOps Audit — Record schema + AuditSink (mem, JSONL)  | Complete   |
-|    4b | FinOps — structlog, OTel, DuckDB sink                  | Pending    |
+|    4b | FinOps — structlog + DuckDB sink + Composite fan-out   | Complete   |
+|   4b' | FinOps — OpenTelemetry traces                          | Pending    |
 |    4c | FinOps — Read-only /stats endpoint                     | Pending    |
 |     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
@@ -53,9 +54,12 @@ src/llm_guardrail_proxy/
       patterns.py           Curated SecretPattern catalogue (Phase 3a).
       secrets.py            SecretScanner driver (Phase 3a).
       pii.py                PiiScanner (Phase 3b, lazy Presidio import).
-    audit/                FinOps audit plane (Phase 4a).
+    audit/                FinOps audit plane (Phase 4a-b).
       records.py            AuditRecord schema + build_audit_record.
       sinks.py              AuditSink Protocol + Null/InMemory/Jsonl impls.
+      composite.py          Fan-out sink with isolated failure semantics.
+      logging_sink.py       structlog sink + configure_logging helper.
+      duckdb_sink.py        DuckDB sink (lazy import, [duckdb] extra).
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
 ```
@@ -107,9 +111,12 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 146 passed, 3 skipped (~3 s).
-- **With `[pii]` extra + spaCy model:** 167 passed (~15 s warm,
-  ~3 min cold — Presidio first-load dominates the cold path).
+- **Without Presidio:** 164 passed, 3 skipped (~6 s).
+- **With `[pii]` extra + spaCy model:** 185 passed (~36 s warm).
+- **Smoke scripts:**
+  - `scripts/smoke_phase4.py` — single sink JSONL end-to-end.
+  - `scripts/smoke_phase4b.py` — composite (JSONL + DuckDB + structlog)
+    fan-out + cross-sink request_id consistency + no-re-leakage.
 
 ## Gotchas worth remembering
 
@@ -173,6 +180,23 @@ Last verified runs:
 - **`PipelineDecision.final_request` is the source of truth for forwarding
   and for `mutations_applied`.** When `final_request is request`, no
   middleware mutated the envelope; record this as `mutations_applied=False`.
+- **`CompositeAuditSink` isolates per-sink failures.** A failing JSONL
+  write must never starve the DuckDB sink, and vice versa. Do not "fix"
+  the silent catch by re-raising — the alternative is a 5xx for the
+  client because of an observability failure.
+- **The in-memory ring is always part of the composite when auditing is
+  enabled.** Phase 4c's `/stats` endpoint reads it; removing it from
+  `_build_audit_sink` breaks that future contract.
+- **`configure_logging` is idempotent.** Calling it twice does not stack
+  processors. Tests that need different formats call it again and trust
+  the replace semantics; do not introduce a `_CONFIGURED` early-return
+  guard or those tests start observing stale config.
+- **DuckDB table name is interpolated into DDL, not parameterised.** The
+  validator (`isalnum() or '_'`) is therefore load-bearing for safety. Do
+  not relax it.
+- **DuckDB sink is opt-in via the `[duckdb]` extra.** Lazy-import in
+  `__init__` raises `MissingAuditBackend` when the wheel is absent.
+  `test_audit_duckdb_sink` uses `pytest.importorskip`.
 
 ## What NOT to do
 

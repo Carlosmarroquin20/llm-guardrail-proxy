@@ -22,10 +22,14 @@ from fastapi.responses import JSONResponse, Response
 from llm_guardrail_proxy.core import ThresholdPolicy, TokenomicsService
 from llm_guardrail_proxy.proxy.audit import (
     AuditSink,
+    CompositeAuditSink,
+    DuckdbAuditSink,
     InMemoryAuditSink,
     JsonlAuditSink,
+    LoggingAuditSink,
     NullAuditSink,
     build_audit_record,
+    configure_logging,
 )
 from llm_guardrail_proxy.proxy.circuit_breaker import CircuitBreaker
 from llm_guardrail_proxy.proxy.envelope import (
@@ -294,18 +298,31 @@ async def _record_audit(
 
 
 def _build_audit_sink(settings: ProxySettings) -> AuditSink:
-    """Translate ``settings`` into a concrete sink.
+    """Translate ``settings`` into a concrete sink (or composite of sinks).
 
-    The composition is intentionally simple: either disabled, JSONL+ring,
-    or ring-only. A composite sink that fans out to multiple destinations
-    (JSONL + DuckDB + OTel) is a Phase 4b concern.
+    The in-memory ring is *always* present when auditing is enabled: it
+    backs the Phase 4c stats endpoint, and its cost is bounded by
+    ``audit_memory_capacity``. Additional destinations (JSONL, DuckDB,
+    structlog) are layered on top via :class:`CompositeAuditSink`, which
+    isolates per-sink failures from the in-flight request.
     """
 
     if not settings.audit_enabled:
         return NullAuditSink()
+
+    sinks: list[AuditSink] = [
+        InMemoryAuditSink(capacity=settings.audit_memory_capacity),
+    ]
+    if settings.audit_log_enabled:
+        sinks.append(LoggingAuditSink())
     if settings.audit_jsonl_path:
-        return JsonlAuditSink(settings.audit_jsonl_path)
-    return InMemoryAuditSink(capacity=settings.audit_memory_capacity)
+        sinks.append(JsonlAuditSink(settings.audit_jsonl_path))
+    if settings.audit_duckdb_path:
+        sinks.append(DuckdbAuditSink(settings.audit_duckdb_path))
+
+    if len(sinks) == 1:
+        return sinks[0]
+    return CompositeAuditSink(sinks)
 
 
 def create_default_app() -> FastAPI:
@@ -317,6 +334,16 @@ def create_default_app() -> FastAPI:
     """
 
     settings = ProxySettings()
+
+    # Logging is configured up-front so the LoggingAuditSink — instantiated
+    # by ``_build_audit_sink`` — finds a properly initialised structlog
+    # stack. Tests skip this call: they assert against the per-record
+    # contract, not the on-the-wire log format.
+    if settings.audit_log_enabled:
+        configure_logging(
+            json=settings.log_format.lower() == "json",
+            level=logging.getLevelName(settings.log_level.upper()),
+        )
     service = TokenomicsService(allow_unknown_models=settings.allow_unknown_models)
     policy = ThresholdPolicy(
         max_tokens=settings.max_prompt_tokens,

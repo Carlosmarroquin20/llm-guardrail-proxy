@@ -18,10 +18,14 @@ from llm_guardrail_proxy.proxy.app import build_app, create_default_app
 from llm_guardrail_proxy.proxy.audit import (
     AuditRecord,
     AuditSink,
+    CompositeAuditSink,
+    DuckdbAuditSink,
     EnforcementVerdict,
     InMemoryAuditSink,
     JsonlAuditSink,
+    LoggingAuditSink,
     NullAuditSink,
+    configure_logging,
 )
 from llm_guardrail_proxy.proxy.envelope import (
     Continue,
@@ -39,10 +43,13 @@ from llm_guardrail_proxy.proxy.settings import ProxySettings
 __all__ = [
     "AuditRecord",
     "AuditSink",
+    "CompositeAuditSink",
     "Continue",
+    "DuckdbAuditSink",
     "EnforcementVerdict",
     "InMemoryAuditSink",
     "JsonlAuditSink",
+    "LoggingAuditSink",
     "Middleware",
     "MiddlewareOutcome",
     "MiddlewarePipeline",
@@ -54,5 +61,6 @@ __all__ = [
     "ProxySettings",
     "Reject",
     "build_app",
+    "configure_logging",
     "create_default_app",
 ]
