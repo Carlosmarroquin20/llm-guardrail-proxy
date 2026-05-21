@@ -22,7 +22,7 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out   | Complete   |
 |    4c | FinOps — Read-only /stats/summary + /stats/recent      | Complete   |
 |    5a | CI/CD — Shift-left CLI (llm-guardrail-scan)            | Complete   |
-|    5b | CI/CD — pre-commit + reusable GH Actions workflow      | Pending    |
+|    5b | CI/CD — pre-commit + reusable GH Actions workflow      | Complete   |
 |   4b' | FinOps — OpenTelemetry traces                          | Pending    |
 |     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
@@ -65,10 +65,13 @@ src/llm_guardrail_proxy/
     stats/                  Read-side query surface (Phase 4c).
       repository.py         StatsRepository Protocol + summarise aggregator.
       router.py             FastAPI router for /stats/summary + /stats/recent.
-  cli/                    Shift-left CLI (Phase 5a).
-    scan.py                 main(argv) + cli() console-script entry.
-    formatters.py           JSON / text output renderers.
+  cli/                    Shift-left CLI (Phase 5a-b).
+    scan.py                 main(argv) + cli() entry, batch & single modes.
+    formatters.py           JSON / text renderers, single and batch shapes.
     __main__.py             Enables ``python -m llm_guardrail_proxy.cli``.
+.pre-commit-hooks.yaml    Phase 5b: hook metadata for downstream repos.
+action.yml                Phase 5b: composite GitHub Action.
+.github/workflows/ci.yml  Phase 5b: internal CI (matrix + PII + dogfood).
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
 ```
@@ -120,8 +123,8 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 198 passed, 3 skipped (~7 s).
-- **With `[pii]` extra + spaCy model:** 219 passed (~52 s warm).
+- **Without Presidio:** 213 passed, 3 skipped (~5 s).
+- **With `[pii]` extra + spaCy model:** 234 passed (~34 s warm).
 - **Smoke scripts:**
   - `scripts/smoke_phase4.py` — single sink JSONL end-to-end.
   - `scripts/smoke_phase4b.py` — composite (JSONL + DuckDB + structlog)
@@ -131,6 +134,10 @@ Last verified runs:
   - `scripts/smoke_phase5.py` — CLI subprocess against four fixtures
     (clean / leak / tokenomics / malformed) — verifies exit-code
     contract and the no-re-leakage invariant on stdout/stderr.
+  - `scripts/smoke_phase5b.py` — pre-commit `run --all-files` against a
+    synthetic consumer repo with two staged fixtures (clean + leaking);
+    validates the runtime contract that `.pre-commit-hooks.yaml`
+    publishes to downstream adopters.
 
 ## Gotchas worth remembering
 
@@ -242,6 +249,23 @@ Last verified runs:
 - **`python -m llm_guardrail_proxy.cli` is the portable entry point.**
   The console script may not be on PATH right after an editable
   install; tests and smoke scripts use the `-m` form for that reason.
+- **CLI batch-mode shape is determined by *invocation*, not result count.**
+  Positional file args → wrapped `{"results": [...], "summary": {...}}`
+  output, even with a single file. `--file` / `--text` / stdin → flat
+  output. Flipping schema based on count would force pre-commit
+  consumers to special-case the 1-file boundary.
+- **`.pre-commit-hooks.yaml` and `action.yml` shapes are pinned by
+  `test_phase5b_metadata.py`.** A change to the `id`, `entry`,
+  `language`, `pass_filenames`, or composite step order breaks every
+  downstream adopter — the tests guard the contract.
+- **Phase 5b smoke uses `repo: local`, not `try-repo`.** `try-repo`
+  clones the repository and requires the hook YAML to be in HEAD; the
+  smoke needs to run against the *working directory*. The local-mode
+  config exercises the same runtime contract (entry, language,
+  pass_filenames) and is faster.
+- **Windows path quirk:** YAML stripped backslashes from
+  `D:\CODE\...` paths silently. The smoke converts via
+  `Path.as_posix()` before writing the config; do not regress this.
 
 ## What NOT to do
 

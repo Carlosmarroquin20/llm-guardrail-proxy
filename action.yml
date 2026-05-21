@@ -1,0 +1,108 @@
+name: llm-guardrail-scan
+description: >
+  Scan prompt files for leaked credentials, PII, and tokenomics policy
+  violations before they ship to an external LLM API. Wraps the
+  ``llm-guardrail-scan`` CLI in a composite GitHub Action.
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  files:
+    description: >
+      Glob (or space-separated list of globs) of files to scan. Matched
+      against the runner's filesystem at action invocation. If the
+      pattern matches no files, the action exits successfully — a fresh
+      repository with no prompt artefacts is not a failure.
+    required: false
+    default: "**/*.json"
+  python-version:
+    description: Python interpreter to use for the scan.
+    required: false
+    default: "3.11"
+  tokens:
+    description: >
+      Enable the tokenomics check. When ``true``, ``--tokens`` is passed
+      to the CLI along with ``--max-tokens``.
+    required: false
+    default: "false"
+  max-tokens:
+    description: Token upper bound when ``tokens`` is enabled.
+    required: false
+    default: "100000"
+  pii:
+    description: >
+      Enable PII detection. When ``true``, the ``[pii]`` extra and the
+      spaCy English model are installed before the scan runs.
+    required: false
+    default: "false"
+  ref:
+    description: >
+      Pin override. Defaults to the ref the action was called at, which
+      is the production-correct behaviour. Override only when testing a
+      branch.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install llm-guardrail-proxy
+      shell: bash
+      env:
+        PII: ${{ inputs.pii }}
+        REF_OVERRIDE: ${{ inputs.ref }}
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        EXTRAS=""
+        if [ "$PII" = "true" ]; then EXTRAS="[pii]"; fi
+        REF="${REF_OVERRIDE:-$ACTION_REF}"
+        # Install directly from the repository the action lives in.
+        # ``github.action_repository`` is set automatically when the
+        # action is consumed; falls back to the local checkout when run
+        # via ``uses: ./``.
+        if [ -n "${ACTION_REPO:-}" ]; then
+          pip install "llm-guardrail-proxy${EXTRAS} @ git+https://github.com/${ACTION_REPO}@${REF}"
+        else
+          pip install -e ".${EXTRAS}" --config-settings editable_mode=compat
+        fi
+        if [ "$PII" = "true" ]; then
+          python -m spacy download en_core_web_sm
+        fi
+
+    - name: Scan staged files
+      shell: bash
+      env:
+        FILES: ${{ inputs.files }}
+        TOKENS: ${{ inputs.tokens }}
+        MAX_TOKENS: ${{ inputs.max-tokens }}
+        PII: ${{ inputs.pii }}
+      run: |
+        set -euo pipefail
+        EXTRA_ARGS=()
+        if [ "$TOKENS" = "true" ]; then
+          EXTRA_ARGS+=( "--tokens" "--max-tokens" "$MAX_TOKENS" )
+        fi
+        if [ "$PII" = "true" ]; then
+          EXTRA_ARGS+=( "--pii" )
+        fi
+        # Expand the glob with nullglob so an empty match is not a
+        # literal pattern. ``globstar`` unlocks the recursive ``**``.
+        shopt -s nullglob globstar
+        # shellcheck disable=SC2206  # word splitting is what we want here
+        MATCHED=( $FILES )
+        if [ "${#MATCHED[@]}" -eq 0 ]; then
+          echo "No files matched '${FILES}' — nothing to scan."
+          exit 0
+        fi
+        echo "Scanning ${#MATCHED[@]} file(s):"
+        printf '  %s\n' "${MATCHED[@]}"
+        llm-guardrail-scan --format text "${EXTRA_ARGS[@]}" "${MATCHED[@]}"

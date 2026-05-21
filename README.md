@@ -15,8 +15,8 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 |    4a | FinOps Audit Plane — Record schema + sinks (in-memory, JSONL) | Complete      |
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | Complete      |
 |    4c | FinOps — Read-only `/stats/summary` and `/stats/recent`       | Complete      |
-|    5a | CI/CD — Shift-left CLI (`llm-guardrail-scan`)                 | **Complete**  |
-|    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | Planned       |
+|    5a | CI/CD — Shift-left CLI (`llm-guardrail-scan`)                 | Complete      |
+|    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | **Complete**  |
 |   4b' | FinOps — OpenTelemetry traces                                 | Planned       |
 |     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned       |
 
@@ -100,6 +100,38 @@ llm-guardrail-scan --file prompts/agent.json --tokens --max-tokens 8000 --pii
 Defaults are deliberately permissive on tokenomics and PII so commit-
 time false positives don't train developers to bypass the hook;
 `secret_scan` is the only check enabled out of the box.
+
+### Adopting in a downstream repository
+
+**Pre-commit hook.** Add to `.pre-commit-config.yaml`:
+
+```yaml
+- repo: https://github.com/Ema322/llm-guardrail-proxy
+  rev: v0.5.0
+  hooks:
+    - id: llm-guardrail-scan
+```
+
+**Reusable GitHub Actions workflow.** Add a job that calls the composite
+action:
+
+```yaml
+jobs:
+  guardrail:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Ema322/llm-guardrail-proxy@v0.5.0
+        with:
+          files: "prompts/**/*.json"
+          tokens: "true"
+          max-tokens: "8000"
+```
+
+The action installs the package from this repository at the pinned ref
+and invokes `llm-guardrail-scan` against the matched files. PII can be
+enabled with `pii: "true"` — that path additionally downloads the spaCy
+English model on the runner.
 
 ### Enabling PII detection (optional extra)
 

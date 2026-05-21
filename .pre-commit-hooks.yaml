@@ -1,0 +1,35 @@
+# Hook metadata consumed by downstream repos.
+#
+# Usage in a consumer's ``.pre-commit-config.yaml``:
+#
+#   - repo: https://github.com/Ema322/llm-guardrail-proxy
+#     rev: v0.5.0   # or any later tag
+#     hooks:
+#       - id: llm-guardrail-scan
+#
+# The hook receives the list of staged files and refuses the commit
+# when any of them carries a leaked credential. The default file filter
+# (``types_or: [json]``) catches prompt files; consumers that store
+# prompts under a different extension override ``types`` in their own
+# config.
+
+- id: llm-guardrail-scan
+  name: llm-guardrail-scan
+  description: >
+    Block commits whose staged prompt files contain leaked credentials.
+    Secret detection is enabled by default; PII and tokenomics are
+    available as per-hook arguments.
+  entry: llm-guardrail-scan
+  language: python
+  # The CLI accepts positional file paths in batch mode; pre-commit
+  # appends the list of staged files automatically. Keeping
+  # ``pass_filenames: true`` (the default) is what wires the two
+  # together.
+  pass_filenames: true
+  # JSON is the typical prompt-file format. Repos that ship prompts
+  # under another extension override this in their own config.
+  types_or: [json]
+  # Run serially so the printed report preserves staged-file order —
+  # the property reviewers expect when reading commit-time logs.
+  require_serial: true
+  minimum_pre_commit_version: "3.0.0"

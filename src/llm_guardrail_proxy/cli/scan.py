@@ -22,7 +22,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Sequence
 
-from llm_guardrail_proxy.cli.formatters import render_json, render_text
+from llm_guardrail_proxy.cli.formatters import (
+    render_batch_json,
+    render_batch_text,
+    render_json,
+    render_text,
+)
 from llm_guardrail_proxy.core import ThresholdPolicy, TokenomicsService
 from llm_guardrail_proxy.proxy.envelope import (
     ParsedPrompt,
@@ -76,6 +81,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--text",
         type=str,
         help="Plain-text prompt to scan. Requires --model.",
+    )
+
+    # Positional file paths support pre-commit's standard invocation,
+    # which appends the list of staged files to the hook entry. The
+    # ``nargs="*"`` form combined with the mutually-exclusive group
+    # above means a single invocation always has exactly one input
+    # source: --file, --text, stdin, or a list of paths.
+    parser.add_argument(
+        "files",
+        nargs="*",
+        type=Path,
+        metavar="FILE",
+        help=(
+            "Files to scan in batch mode (the form pre-commit uses). "
+            "Mutually exclusive with --file/--text/stdin. Provider is "
+            "auto-detected per file."
+        ),
     )
 
     parser.add_argument(
@@ -152,45 +174,60 @@ def _detect_provider(payload: dict) -> Provider:
     return Provider.OPENAI
 
 
-def _load_input(args: argparse.Namespace) -> ProxyRequest:
-    """Build a :class:`ProxyRequest` from the CLI arguments.
+def _load_file(path: Path) -> ProxyRequest:
+    """Parse a single JSON-shaped prompt file into an envelope.
 
-    Three modes are accepted:
-
-    * ``--file`` — JSON body parsed via the matching provider adapter.
-    * ``--text`` — synthetic envelope with the supplied content.
-    * neither — read stdin as plain text.
-
-    Raises ``ValueError`` on malformed input; the caller maps it to the
-    ``EXIT_INPUT_ERROR`` exit code.
+    Raises :class:`ValueError` with a user-readable message on any read
+    or parse error. The caller is responsible for surfacing it as the
+    CLI's input-error exit code.
     """
 
-    if args.file is not None:
-        try:
-            raw = args.file.read_bytes()
-        except OSError as exc:
-            raise ValueError(f"could not read {args.file}: {exc}") from exc
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{args.file} is not valid JSON: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"{args.file} must contain a JSON object")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"could not read {path}: {exc}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
 
-        provider = _detect_provider(payload)
-        adapter = (
-            AnthropicMessagesAdapter()
-            if provider is Provider.ANTHROPIC
-            else OpenAIChatAdapter()
-        )
-        parsed = adapter.parse(raw)
-        return ProxyRequest(
-            path=_CLI_PATH,
-            method=_CLI_METHOD,
-            headers={},
-            raw_body=raw,
-            parsed=parsed,
-        )
+    provider = _detect_provider(payload)
+    adapter = (
+        AnthropicMessagesAdapter()
+        if provider is Provider.ANTHROPIC
+        else OpenAIChatAdapter()
+    )
+    parsed = adapter.parse(raw)
+    return ProxyRequest(
+        path=_CLI_PATH,
+        method=_CLI_METHOD,
+        headers={},
+        raw_body=raw,
+        parsed=parsed,
+    )
+
+
+def _load_inputs(args: argparse.Namespace) -> list[tuple[str, ProxyRequest]]:
+    """Resolve CLI flags into ``[(label, envelope), ...]``.
+
+    ``label`` is the human-facing identifier displayed in batch output —
+    a path for file-mode entries, ``-`` for stdin, ``--text`` for the
+    literal-string mode. Single-mode invocations return a one-element
+    list; the rest of the pipeline does not need to special-case batch.
+    """
+
+    if args.files:
+        if args.file is not None or args.text is not None:
+            raise ValueError(
+                "positional file arguments are mutually exclusive with "
+                "--file and --text."
+            )
+        return [(str(path), _load_file(path)) for path in args.files]
+
+    if args.file is not None:
+        return [(str(args.file), _load_file(args.file))]
 
     # --text / stdin branches build a synthetic envelope. The placeholder
     # raw_body is a minimal OpenAI-shaped JSON so any downstream code path
@@ -198,13 +235,15 @@ def _load_input(args: argparse.Namespace) -> ProxyRequest:
     # still operates on a well-formed document.
     if args.text is not None:
         content = args.text
+        label = "--text"
     else:
         if sys.stdin.isatty():
             raise ValueError(
-                "no input supplied — pass --file PATH, --text STRING, or pipe "
-                "the prompt on stdin."
+                "no input supplied — pass --file PATH, --text STRING, a list "
+                "of positional file paths, or pipe the prompt on stdin."
             )
         content = sys.stdin.read()
+        label = "-"
 
     synthetic_body = json.dumps(
         {
@@ -218,14 +257,19 @@ def _load_input(args: argparse.Namespace) -> ProxyRequest:
         model=args.model,
         content=content,
     )
-    return ProxyRequest(
-        path="/v1/chat/completions",  # well-formed so the adapter
-                                       # resolves cleanly if needed
-        method=_CLI_METHOD,
-        headers={},
-        raw_body=synthetic_body,
-        parsed=parsed,
-    )
+    return [
+        (
+            label,
+            ProxyRequest(
+                path="/v1/chat/completions",  # well-formed so the
+                                              # adapter resolves cleanly
+                method=_CLI_METHOD,
+                headers={},
+                raw_body=synthetic_body,
+                parsed=parsed,
+            ),
+        )
+    ]
 
 
 # ----------------------------------------------------------- middlewares
@@ -283,6 +327,23 @@ async def _run(request: ProxyRequest, pipeline: MiddlewarePipeline) -> PipelineD
     return await pipeline.run(request)
 
 
+async def _run_all(
+    pipeline: MiddlewarePipeline, requests: list[tuple[str, ProxyRequest]]
+) -> list[tuple[str, PipelineDecision]]:
+    """Run the pipeline against every (label, envelope) pair sequentially.
+
+    Sequential rather than concurrent on purpose: ``tiktoken`` is
+    CPU-bound, so concurrent runs do not speed anything up in the
+    single-process CLI, and serial execution makes the output order
+    match the input order — the property pre-commit expects.
+    """
+
+    results: list[tuple[str, PipelineDecision]] = []
+    for label, req in requests:
+        results.append((label, await pipeline.run(req)))
+    return results
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Programmatic entry point — returns an integer exit code.
 
@@ -294,7 +355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     try:
-        request = _load_input(args)
+        inputs = _load_inputs(args)
         pipeline = _build_pipeline(args)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -303,15 +364,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_INPUT_ERROR
 
-    decision = asyncio.run(_run(request, pipeline))
+    results = asyncio.run(_run_all(pipeline, inputs))
 
-    if args.format == "json":
-        sys.stdout.write(render_json(decision))
+    # Output shape is determined by *invocation mode*, not by the number
+    # of resulting decisions. Pre-commit calls this CLI the same way
+    # whether one or many files are staged; flipping the schema based
+    # on count would force consumers to special-case the boundary.
+    batch_invocation = bool(args.files)
+    if batch_invocation:
+        if args.format == "json":
+            sys.stdout.write(render_batch_json(results))
+        else:
+            sys.stdout.write(render_batch_text(results))
     else:
-        sys.stdout.write(render_text(decision))
+        _, decision = results[0]
+        if args.format == "json":
+            sys.stdout.write(render_json(decision))
+        else:
+            sys.stdout.write(render_text(decision))
     sys.stdout.write("\n")
 
-    return EXIT_OK if decision.is_allowed else EXIT_REJECTED
+    rejected = any(not d.is_allowed for _, d in results)
+    return EXIT_REJECTED if rejected else EXIT_OK
 
 
 def cli() -> None:

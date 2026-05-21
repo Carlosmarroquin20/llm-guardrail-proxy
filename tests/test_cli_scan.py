@@ -245,6 +245,102 @@ class TestFormat:
 # ---------------------------------------------------- console-script wiring
 
 
+class TestBatchMode:
+    """Positional file args — the form pre-commit uses."""
+
+    def test_two_clean_files_return_zero(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        a = tmp_path / "a.json"
+        b = tmp_path / "b.json"
+        for f in (a, b):
+            f.write_text(
+                json.dumps(
+                    {
+                        "model": "gpt-4o",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        exit_code = main([str(a), str(b)])
+        out = capsys.readouterr().out
+        assert exit_code == EXIT_OK
+        payload = json.loads(out)
+        # Batch-mode shape: wrapped object with ``results`` + ``summary``.
+        assert payload["summary"] == {"scanned": 2, "allowed": 2, "rejected": 0}
+        # Ordering preserved.
+        labels = [r["file"] for r in payload["results"]]
+        assert labels == [str(a), str(b)]
+
+    def test_any_rejected_file_returns_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        clean = tmp_path / "clean.json"
+        clean.write_text(
+            json.dumps(
+                {
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hello"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        leak = tmp_path / "leak.json"
+        leak.write_text(
+            json.dumps(
+                {
+                    "model": "gpt-4o",
+                    "messages": [
+                        {"role": "user", "content": "AKIAABCDEFGHIJKLMNOP"}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        exit_code = main([str(clean), str(leak)])
+        out = capsys.readouterr().out
+        assert exit_code == EXIT_REJECTED
+        payload = json.loads(out)
+        assert payload["summary"]["rejected"] == 1
+        # The rejected entry carries the structured Reject payload.
+        rejected_entries = [
+            r for r in payload["results"] if r["verdict"] == "rejected"
+        ]
+        assert len(rejected_entries) == 1
+        assert rejected_entries[0]["rejecting_middleware"] == "secret_scan"
+
+    def test_batch_text_format_has_summary_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        a = tmp_path / "a.json"
+        a.write_text(
+            json.dumps(
+                {
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        main([str(a), "--format", "text"])
+        out = capsys.readouterr().out
+        # Last line is the aggregate summary — readable by jq-less log
+        # surfaces (pre-commit, GH Actions console).
+        last = out.strip().splitlines()[-1]
+        assert last.startswith("summary:")
+        assert "scanned=1" in last
+
+    def test_batch_mode_conflicts_with_text_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        a = tmp_path / "a.json"
+        a.write_text("{}", encoding="utf-8")
+        exit_code = main(["--text", "hi", "--model", "gpt-4o", str(a)])
+        assert exit_code == EXIT_INPUT_ERROR
+        assert "mutually exclusive" in capsys.readouterr().err
+
+
 class TestConsoleScript:
     def test_subprocess_invocation_exits_with_expected_code(
         self, tmp_path: Path

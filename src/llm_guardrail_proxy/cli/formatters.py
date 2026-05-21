@@ -98,3 +98,79 @@ def _annotation_summary(payload: Any) -> str:
         if key in payload:
             parts.append(f"{key}={payload[key]}")
     return " ".join(parts)
+
+
+# ---------------------------------------------------- batch renderers
+
+
+def render_batch_json(
+    results: list[tuple[str, PipelineDecision]],
+) -> str:
+    """Emit a per-file JSON document plus an aggregate summary.
+
+    Used when the CLI is invoked with positional file arguments — the
+    standard pre-commit calling convention. The wrapped shape is
+    distinguishable from single-mode output by the presence of the
+    ``results`` and ``summary`` keys.
+    """
+
+    per_file: list[dict[str, Any]] = []
+    for label, decision in results:
+        per_file.append(
+            {
+                "file": label,
+                "verdict": "allowed" if decision.is_allowed else "rejected",
+                "rejecting_middleware": decision.rejecting_middleware,
+                "annotations": decision.annotations,
+                "reject": _serialise_reject(decision),
+            }
+        )
+
+    rejected = sum(1 for _, d in results if not d.is_allowed)
+    payload = {
+        "results": per_file,
+        "summary": {
+            "scanned": len(results),
+            "allowed": len(results) - rejected,
+            "rejected": rejected,
+        },
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
+
+
+def render_batch_text(
+    results: list[tuple[str, PipelineDecision]],
+) -> str:
+    """Emit one block per file followed by a single-line summary.
+
+    The output mirrors common linter formats (one block per offending
+    artefact + a final summary line) so it slots cleanly into the
+    pre-commit and CI log surfaces operators already scan visually.
+    """
+
+    lines: list[str] = []
+    rejected = 0
+    for label, decision in results:
+        if decision.is_allowed:
+            lines.append(f"{label}: PASS")
+        else:
+            rejected += 1
+            assert isinstance(decision.outcome, Reject)
+            lines.append(
+                f"{label}: FAIL ({decision.rejecting_middleware}: "
+                f"{decision.outcome.reason})"
+            )
+            for finding in decision.annotations.get(
+                decision.rejecting_middleware or "", {}
+            ).get("findings", []) or []:
+                lines.append(
+                    f"    - {finding.get('label', finding.get('kind'))}"
+                    f" severity={finding.get('severity')}"
+                    f" preview={finding.get('preview')}"
+                )
+    lines.append(
+        f"summary: scanned={len(results)} "
+        f"allowed={len(results) - rejected} "
+        f"rejected={rejected}"
+    )
+    return "\n".join(lines)
