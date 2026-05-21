@@ -118,6 +118,11 @@ class ProxySettings(BaseSettings):
     # proxy externally should set this to false (or front it with auth).
     enable_stats_endpoint: bool = True
 
+    # HTML dashboard served at ``/stats/dashboard``. Follows the JSON
+    # endpoints — if those are off, the dashboard cannot work, so the
+    # combined setting expresses the operator-meaningful toggle.
+    enable_dashboard: bool = True
+
 
 def get_settings() -> ProxySettings:
     """Return a freshly-validated settings instance.

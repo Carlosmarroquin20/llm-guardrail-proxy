@@ -14,7 +14,7 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 |    3b | Content Guardrails — PII Detection (Presidio, BLOCK / REDACT) | Complete      |
 |    4a | FinOps Audit Plane — Record schema + sinks (in-memory, JSONL) | Complete      |
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | Complete      |
-|    4c | FinOps — Read-only `/stats/summary` and `/stats/recent`       | Complete      |
+|    4c | FinOps — Read-only `/stats/*` + HTML dashboard                | Complete      |
 |    5a | CI/CD — Shift-left CLI (`llm-guardrail-scan`)                 | Complete      |
 |    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | **Complete**  |
 |   4b' | FinOps — OpenTelemetry traces                                 | Planned       |
@@ -44,6 +44,11 @@ Then point any OpenAI-compatible SDK at the proxy:
 ```powershell
 $env:OPENAI_BASE_URL = "http://127.0.0.1:8080/v1"
 ```
+
+Open the live dashboard at **http://127.0.0.1:8080/stats/dashboard** for
+an auto-refreshing view of the audit ring (verdicts, costs, latency,
+findings — every 5 seconds). The page is fully self-contained: no CDN
+fonts, no external scripts, no third-party calls.
 
 ### Layout
 

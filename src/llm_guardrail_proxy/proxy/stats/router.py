@@ -11,8 +11,10 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Query
+from fastapi.responses import HTMLResponse
 
 from llm_guardrail_proxy.proxy.audit import AuditRecord
+from llm_guardrail_proxy.proxy.stats.dashboard import DASHBOARD_HTML
 from llm_guardrail_proxy.proxy.stats.repository import (
     StatsRepository,
     StatsSummary,
@@ -20,12 +22,20 @@ from llm_guardrail_proxy.proxy.stats.repository import (
 )
 
 
-def build_stats_router(repository: StatsRepository) -> APIRouter:
+def build_stats_router(
+    repository: StatsRepository,
+    *,
+    enable_dashboard: bool = True,
+) -> APIRouter:
     """Construct a router rooted at ``/stats``.
 
     ``include_in_schema=True`` is left as the FastAPI default so the
     endpoints appear in the OpenAPI document — operators routinely use
     that as the discovery surface.
+
+    ``enable_dashboard`` controls whether the HTML dashboard is mounted.
+    The dashboard reads from the same JSON endpoints, so disabling it
+    does not affect the API surface other consumers depend on.
     """
 
     router = APIRouter(prefix="/stats", tags=["stats"])
@@ -55,5 +65,19 @@ def build_stats_router(repository: StatsRepository) -> APIRouter:
         snapshot = list(repository.records)
         snapshot.reverse()
         return snapshot[:limit]
+
+    if enable_dashboard:
+        @router.get(
+            "/dashboard",
+            response_class=HTMLResponse,
+            include_in_schema=False,
+            summary="Auto-refreshing HTML view of the audit ring.",
+        )
+        async def dashboard() -> HTMLResponse:
+            # The HTML is a static constant; serving it from the same
+            # router keeps the dashboard discoverable next to the JSON
+            # endpoints it consumes. ``include_in_schema=False`` keeps
+            # the OpenAPI document focused on the machine surface.
+            return HTMLResponse(DASHBOARD_HTML)
 
     return router

@@ -220,3 +220,119 @@ class TestRecentEndpoint:
             await upstream.aclose()
         # The serialised body must not contain the raw AWS-shaped fixture.
         assert "AKIAABCDEFGHIJKLMNOP" not in response.text
+
+
+# --------------------------------------------------------------- dashboard
+
+
+class TestDashboardEndpoint:
+    async def test_dashboard_returns_html(self) -> None:
+        client, upstream, _ = _build(
+            upstream_handler=lambda r: httpx.Response(200, json={"id": "ok"})
+        )
+        try:
+            response = await client.get("/stats/dashboard")
+        finally:
+            await client.aclose()
+            await upstream.aclose()
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+
+    async def test_dashboard_contains_expected_anchors(self) -> None:
+        # The HTML carries DOM IDs that the embedded JS depends on; if a
+        # refactor drops them, the dashboard renders an empty page in
+        # the browser. Pin them here so the regression surfaces in CI.
+        client, upstream, _ = _build(
+            upstream_handler=lambda r: httpx.Response(200, json={})
+        )
+        try:
+            response = await client.get("/stats/dashboard")
+        finally:
+            await client.aclose()
+            await upstream.aclose()
+        body = response.text
+        for anchor in (
+            'id="summary-cards"',
+            'id="breakdown"',
+            'id="recent"',
+            "/stats/summary",
+            "/stats/recent",
+        ):
+            assert anchor in body, f"dashboard is missing anchor {anchor!r}"
+
+    async def test_dashboard_loads_no_external_assets(self) -> None:
+        # Zero-egress means the dashboard must not reach any third-party
+        # origin — no CDN fonts, no analytics, no remote scripts. Any
+        # ``http(s)://`` URL in the markup pointing outward would breach
+        # that contract.
+        client, upstream, _ = _build(
+            upstream_handler=lambda r: httpx.Response(200, json={})
+        )
+        try:
+            response = await client.get("/stats/dashboard")
+        finally:
+            await client.aclose()
+            await upstream.aclose()
+        body = response.text
+        # ``http://127.0.0.1`` and ``http://proxy.test`` would be okay,
+        # but the dashboard uses *relative* fetches, so any ``http(s)``
+        # at all signals a regression.
+        assert "http://" not in body
+        assert "https://" not in body
+
+    async def test_dashboard_disabled_when_flag_off(self) -> None:
+        # Re-use the existing ``_build`` helper but flip the setting via
+        # a wrapper. The router is built per app, so disabling here
+        # means the route literally does not exist.
+        from llm_guardrail_proxy.proxy.app import build_app
+        from llm_guardrail_proxy.proxy.audit import InMemoryAuditSink
+        from llm_guardrail_proxy.proxy.circuit_breaker import CircuitBreaker
+        from llm_guardrail_proxy.proxy.envelope import Provider
+        from llm_guardrail_proxy.proxy.forwarder import UpstreamForwarder
+        from llm_guardrail_proxy.proxy.middlewares import TokenomicsMiddleware
+        from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
+
+        sink = InMemoryAuditSink(capacity=10)
+        upstream_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+        )
+        forwarder = UpstreamForwarder(
+            client=upstream_client,
+            breaker=CircuitBreaker(failure_threshold=2, reset_seconds=60),
+            origins={
+                Provider.OPENAI: "https://upstream-openai.test",
+                Provider.ANTHROPIC: "https://upstream-anthropic.test",
+            },
+        )
+        pipeline = MiddlewarePipeline(
+            [
+                TokenomicsMiddleware(
+                    service=TokenomicsService(),
+                    policy=ThresholdPolicy(max_tokens=10_000),
+                )
+            ]
+        )
+        settings = ProxySettings(
+            openai_base_url="https://upstream-openai.test",
+            anthropic_base_url="https://upstream-anthropic.test",
+            enable_dashboard=False,
+        )
+        app = build_app(
+            settings=settings,
+            pipeline=pipeline,
+            forwarder=forwarder,
+            audit_sink=sink,
+            stats_repository=sink,
+        )
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://proxy.test",
+        )
+        try:
+            # JSON endpoints still up.
+            assert (await client.get("/stats/summary")).status_code == 200
+            # Dashboard is gone.
+            assert (await client.get("/stats/dashboard")).status_code == 404
+        finally:
+            await client.aclose()
+            await upstream_client.aclose()

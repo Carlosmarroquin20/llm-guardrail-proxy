@@ -20,7 +20,7 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |    3b | Content Guardrails — PII Detection (Presidio)          | Complete   |
 |    4a | FinOps Audit — Record schema + AuditSink (mem, JSONL)  | Complete   |
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out   | Complete   |
-|    4c | FinOps — Read-only /stats/summary + /stats/recent      | Complete   |
+|    4c | FinOps — /stats/* JSON + HTML dashboard                | Complete   |
 |    5a | CI/CD — Shift-left CLI (llm-guardrail-scan)            | Complete   |
 |    5b | CI/CD — pre-commit + reusable GH Actions workflow      | Complete   |
 |   4b' | FinOps — OpenTelemetry traces                          | Pending    |
@@ -65,6 +65,7 @@ src/llm_guardrail_proxy/
     stats/                  Read-side query surface (Phase 4c).
       repository.py         StatsRepository Protocol + summarise aggregator.
       router.py             FastAPI router for /stats/summary + /stats/recent.
+      dashboard.py          Embedded self-contained HTML at /stats/dashboard.
   cli/                    Shift-left CLI (Phase 5a-b).
     scan.py                 main(argv) + cli() entry, batch & single modes.
     formatters.py           JSON / text renderers, single and batch shapes.
@@ -123,8 +124,8 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 213 passed, 3 skipped (~5 s).
-- **With `[pii]` extra + spaCy model:** 234 passed (~34 s warm).
+- **Without Presidio:** 217 passed, 3 skipped (~5 s).
+- **With `[pii]` extra + spaCy model:** 238 passed (~25 s warm).
 - **Smoke scripts:**
   - `scripts/smoke_phase4.py` — single sink JSONL end-to-end.
   - `scripts/smoke_phase4b.py` — composite (JSONL + DuckDB + structlog)
@@ -138,6 +139,9 @@ Last verified runs:
     synthetic consumer repo with two staged fixtures (clean + leaking);
     validates the runtime contract that `.pre-commit-hooks.yaml`
     publishes to downstream adopters.
+  - `scripts/smoke_dashboard.py` — HTML dashboard at /stats/dashboard
+    against a real uvicorn process: anchors present, no external
+    assets, JSON polling endpoints reachable.
 
 ## Gotchas worth remembering
 
@@ -232,6 +236,13 @@ Last verified runs:
   serialises to a JSON string by Pydantic default. Tests assert against
   the string form because `float(...)` round-trip would defeat the
   no-float-drift contract.
+- **The dashboard HTML loads zero external assets.** The proxy is a
+  zero-egress tool; an operator-facing page that reaches a CDN would
+  contradict that. `test_dashboard_loads_no_external_assets` pins the
+  invariant by failing on any `http(s)://` URL in the markup.
+- **Dashboard HTML is embedded as a Python string constant, not a
+  bundled asset.** Avoids `package_data` / `MANIFEST.in` configuration
+  drift in the wheel; the markup is always shipped with the code.
 - **The CLI ignores `GUARDRAIL_*` environment variables on purpose.**
   Flags are the only configuration surface — a pre-commit hook whose
   behaviour drifts with the developer's shell becomes unreproducible

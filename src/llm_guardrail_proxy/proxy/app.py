@@ -111,7 +111,12 @@ def build_app(
     app.state.stats_repository = stats_repository
 
     if stats_repository is not None and settings.enable_stats_endpoint:
-        app.include_router(build_stats_router(stats_repository))
+        app.include_router(
+            build_stats_router(
+                stats_repository,
+                enable_dashboard=settings.enable_dashboard,
+            )
+        )
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:
