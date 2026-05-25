@@ -280,6 +280,35 @@ class TestDashboardEndpoint:
         assert "http://" not in body
         assert "https://" not in body
 
+    async def test_dashboard_renders_polished_anchors(self) -> None:
+        # Pin the upgraded visual contract introduced after the base
+        # dashboard: severity-coloured chips, status indicator, and
+        # bar-chart breakdowns. A refactor that drops these falls
+        # back to a less useful UI silently — failing here keeps the
+        # regression visible.
+        client, upstream, _ = _build(
+            upstream_handler=lambda r: httpx.Response(200, json={})
+        )
+        try:
+            response = await client.get("/stats/dashboard")
+        finally:
+            await client.aclose()
+            await upstream.aclose()
+        body = response.text
+        # Status dot (connection health indicator).
+        assert 'id="status-dot"' in body
+        # Bar-chart structure for breakdowns.
+        assert 'class="bar-row' in body
+        assert 'class="bar-fill"' in body
+        # Severity-colour chip classes used in the recent table.
+        for severity in ("severity-high", "severity-medium", "severity-low"):
+            assert severity in body, f"missing chip class {severity!r}"
+        # Provider chip classes.
+        assert "provider-openai" in body
+        assert "provider-anthropic" in body
+        # Pause-on-hover state class.
+        assert "table-wrap" in body
+
     async def test_dashboard_disabled_when_flag_off(self) -> None:
         # Re-use the existing ``_build`` helper but flip the setting via
         # a wrapper. The router is built per app, so disabling here
