@@ -25,7 +25,7 @@ from llm_guardrail_proxy.proxy.envelope import (
     ProxyRequest,
     Reject,
 )
-from llm_guardrail_proxy.proxy.scanning import PiiScanner, ScanFinding
+from llm_guardrail_proxy.proxy.scanning import PiiScanner
 
 
 class PiiPolicy(str, Enum):
@@ -58,7 +58,7 @@ class PiiScanMiddleware:
                 ),
                 annotations={
                     "finding_count": len(findings),
-                    "findings": [_serialise(f) for f in findings],
+                    "findings": [f.as_dict() for f in findings],
                 },
             )
 
@@ -79,24 +79,7 @@ class PiiScanMiddleware:
             replacements=tuple(replacements),
             annotations={
                 "finding_count": len(findings),
-                "findings": [_serialise(f) for f in findings],
+                "findings": [f.as_dict() for f in findings],
                 "policy": self.policy.value,
             },
         )
-
-
-def _serialise(finding: ScanFinding) -> dict:
-    """Project a finding onto an audit-safe dict.
-
-    Identical contract to ``secret_scan._serialise`` — keeping the two
-    representations in lockstep means Phase 4's audit ledger only has to
-    learn one shape.
-    """
-
-    return {
-        "kind": finding.kind,
-        "label": finding.label,
-        "severity": finding.severity.value,
-        "span": list(finding.span),
-        "preview": finding.preview,
-    }

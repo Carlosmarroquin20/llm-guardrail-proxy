@@ -45,12 +45,12 @@ def _run_smoke() -> int:
             p.unlink()
 
     env = os.environ.copy()
-    env["GUARDRAIL_AUDIT_JSONL_PATH"] = str(JSONL)
-    env["GUARDRAIL_AUDIT_DUCKDB_PATH"] = str(DUCKDB)
-    env["GUARDRAIL_LISTEN_PORT"] = str(PORT)
-    env["GUARDRAIL_ENABLE_PII_SCANNING"] = "false"
+    env["GUARDRAIL_AUDIT__JSONL_PATH"] = str(JSONL)
+    env["GUARDRAIL_AUDIT__DUCKDB_PATH"] = str(DUCKDB)
+    env["GUARDRAIL_NETWORK__LISTEN_PORT"] = str(PORT)
+    env["GUARDRAIL_SCANNING__ENABLE_PII"] = "false"
     # Force JSON output so the log file is machine-parseable.
-    env["GUARDRAIL_LOG_FORMAT"] = "json"
+    env["GUARDRAIL_LOGGING__FORMAT"] = "json"
 
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if not python.exists():

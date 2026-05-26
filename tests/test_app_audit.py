@@ -50,8 +50,10 @@ def _build(*, policy: ThresholdPolicy, upstream_handler, include_secret_scan: bo
     )
     pipeline = MiddlewarePipeline(middlewares)
     settings = ProxySettings(
-        openai_base_url="https://upstream-openai.test",
-        anthropic_base_url="https://upstream-anthropic.test",
+        network={
+            "openai_base_url": "https://upstream-openai.test",
+            "anthropic_base_url": "https://upstream-anthropic.test",
+        },
     )
     sink = InMemoryAuditSink(capacity=10)
     app = build_app(

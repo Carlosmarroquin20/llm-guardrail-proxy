@@ -51,11 +51,11 @@ def _run_smoke() -> int:
         JSONL.unlink()
 
     env = os.environ.copy()
-    env["GUARDRAIL_AUDIT_JSONL_PATH"] = str(JSONL)
-    env["GUARDRAIL_LISTEN_PORT"] = str(PORT)
+    env["GUARDRAIL_AUDIT__JSONL_PATH"] = str(JSONL)
+    env["GUARDRAIL_NETWORK__LISTEN_PORT"] = str(PORT)
     # Disable PII to keep the smoke fast; Phase 3b is independently
     # validated by the pytest suite.
-    env["GUARDRAIL_ENABLE_PII_SCANNING"] = "false"
+    env["GUARDRAIL_SCANNING__ENABLE_PII"] = "false"
 
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if not python.exists():

@@ -18,8 +18,8 @@ def main() -> None:
     settings = ProxySettings()
     uvicorn.run(
         "llm_guardrail_proxy.proxy.app:create_default_app",
-        host=settings.listen_host,
-        port=settings.listen_port,
+        host=settings.network.listen_host,
+        port=settings.network.listen_port,
         factory=True,
         log_level="info",
     )

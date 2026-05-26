@@ -26,8 +26,10 @@ from llm_guardrail_proxy.proxy.settings import ProxySettings
 
 def _settings() -> ProxySettings:
     return ProxySettings(
-        openai_base_url="https://upstream-openai.test",
-        anthropic_base_url="https://upstream-anthropic.test",
+        network={
+            "openai_base_url": "https://upstream-openai.test",
+            "anthropic_base_url": "https://upstream-anthropic.test",
+        },
     )
 
 

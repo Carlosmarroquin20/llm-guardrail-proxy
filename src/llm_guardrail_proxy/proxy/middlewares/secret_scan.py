@@ -15,7 +15,7 @@ from llm_guardrail_proxy.proxy.envelope import (
     ProxyRequest,
     Reject,
 )
-from llm_guardrail_proxy.proxy.scanning import ScanFinding, SecretScanner
+from llm_guardrail_proxy.proxy.scanning import SecretScanner
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,22 +46,6 @@ class SecretScanMiddleware:
             ),
             annotations={
                 "finding_count": len(findings),
-                "findings": [_serialise(f) for f in findings],
+                "findings": [f.as_dict() for f in findings],
             },
         )
-
-
-def _serialise(finding: ScanFinding) -> dict:
-    """Project a finding onto an audit-safe dict.
-
-    Notably omits the raw match: ``preview`` is the only credential-derived
-    field that crosses the audit boundary.
-    """
-
-    return {
-        "kind": finding.kind,
-        "label": finding.label,
-        "severity": finding.severity.value,
-        "span": list(finding.span),
-        "preview": finding.preview,
-    }

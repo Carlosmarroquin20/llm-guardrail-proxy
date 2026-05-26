@@ -1,9 +1,22 @@
 """Environment-driven configuration for the proxy.
 
-``pydantic-settings`` is used so that every knob is documented in code,
-validated at startup, and overridable via either environment variables or a
-``.env`` file. All variables share the ``GUARDRAIL_`` prefix to prevent
-collisions with the upstream provider SDKs' own configuration.
+Settings are organised into sub-models by concern. The top-level
+:class:`ProxySettings` carries no leaf fields of its own — it composes
+specialised models so the surface stays navigable as the project grows.
+
+Environment variables follow the ``GUARDRAIL_<group>__<field>``
+convention: the double-underscore delimiter is the pydantic-settings
+default for nested resolution. Example:
+
+::
+
+    GUARDRAIL_NETWORK__LISTEN_PORT=8080
+    GUARDRAIL_AUDIT__JSONL_PATH=./var/audit.jsonl
+    GUARDRAIL_SCANNING__ENABLE_PII=true
+
+The grouping mirrors the package layout (``audit/``, ``stats/``,
+``scanning/``, etc.); navigating ``settings.audit.*`` matches the mental
+model an operator already has for the code itself.
 """
 
 from __future__ import annotations
@@ -11,117 +24,142 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# ---------------------------------------------------------------- groups
+
+
+class NetworkSettings(BaseModel):
+    """Listening socket and upstream origins."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    listen_host: str = "127.0.0.1"
+    listen_port: Annotated[int, Field(gt=0, lt=65_536)] = 8080
+
+    openai_base_url: HttpUrl = Field(default=HttpUrl("https://api.openai.com"))
+    anthropic_base_url: HttpUrl = Field(
+        default=HttpUrl("https://api.anthropic.com")
+    )
+
+    upstream_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
+
+
+class BreakerSettings(BaseModel):
+    """Async circuit breaker tuning."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    failure_threshold: Annotated[int, Field(ge=1)] = 5
+    reset_seconds: Annotated[float, Field(gt=0)] = 30.0
+
+
+class TokenomicsSettings(BaseModel):
+    """Phase 1 cost policy."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_prompt_tokens: Annotated[int, Field(gt=0)] = 8_000
+    max_prompt_cost_usd: Annotated[Decimal, Field(gt=Decimal("0"))] = Decimal("0.05")
+    allow_unknown_models: bool = True
+
+
+class ScanningSettings(BaseModel):
+    """Phase 3 content guardrails (secret + PII)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Secrets are regex-only — there is no performance reason to disable
+    # them in normal operation, hence default-on.
+    enable_secrets: bool = True
+
+    # PII is opt-in because Presidio + spaCy + the language model add
+    # ~80 MB to the install and a non-trivial cold-start cost.
+    enable_pii: bool = False
+    # ``block`` refuses to forward when PII is present; ``redact`` rewrites
+    # the prompt in place. ``block`` is the safer default because
+    # redaction can lose meaning the user needed the model to see.
+    pii_policy: str = "block"
+    pii_score_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+
+
+class AuditSettings(BaseModel):
+    """FinOps audit plane configuration.
+
+    The in-memory ring is always present when ``enabled`` is True — it
+    backs the stats endpoint. Additional destinations (JSONL, DuckDB,
+    structlog) are layered on top via a composite sink.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    memory_capacity: Annotated[int, Field(gt=0)] = 1_000
+
+    # ``None`` keeps the corresponding sink out of the composite.
+    jsonl_path: str | None = None
+    duckdb_path: str | None = None
+
+    # When True, a LoggingAuditSink is part of the composite. The
+    # structlog stack itself is configured via ``LoggingSettings``.
+    log_enabled: bool = True
+
+
+class StatsSettings(BaseModel):
+    """Read-only ``/stats/*`` surface."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Default-on because the proxy binds to localhost; operators exposing
+    # the proxy externally should set this to false (or front it with
+    # auth) since /stats surfaces findings previews and cost data.
+    enable_endpoint: bool = True
+    # The HTML dashboard at /stats/dashboard. Strictly subordinate to
+    # ``enable_endpoint`` — turning the endpoints off also disables the
+    # dashboard regardless of this value.
+    enable_dashboard: bool = True
+
+
+class LoggingSettings(BaseModel):
+    """Structlog stack configuration."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # ``json`` is the production renderer; ``console`` is the colourised
+    # interactive one for development.
+    format: str = "json"
+    level: str = "INFO"
+
+
+# ---------------------------------------------------------------- root
 
 
 class ProxySettings(BaseSettings):
-    """Runtime configuration object.
+    """Composite settings root.
 
     Construction is lazy: callers should obtain an instance via
-    :func:`get_settings` so the same validated object is shared across the
-    FastAPI application lifetime instead of being rebuilt per request.
+    :func:`get_settings` so the same validated object is shared across
+    the FastAPI application lifetime instead of being rebuilt per
+    request.
     """
 
     model_config = SettingsConfigDict(
         env_prefix="GUARDRAIL_",
+        env_nested_delimiter="__",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
         frozen=True,
     )
 
-    # --- Upstream targets ------------------------------------------------
-
-    openai_base_url: HttpUrl = Field(
-        default=HttpUrl("https://api.openai.com"),
-        description="Origin used for OpenAI-shaped requests.",
-    )
-    anthropic_base_url: HttpUrl = Field(
-        default=HttpUrl("https://api.anthropic.com"),
-        description="Origin used for Anthropic-shaped requests.",
-    )
-
-    # --- Network behaviour ----------------------------------------------
-
-    upstream_timeout_seconds: Annotated[float, Field(gt=0)] = 30.0
-    listen_host: str = "127.0.0.1"
-    listen_port: Annotated[int, Field(gt=0, lt=65_536)] = 8080
-
-    # --- Circuit breaker -------------------------------------------------
-
-    breaker_failure_threshold: Annotated[int, Field(ge=1)] = 5
-    breaker_reset_seconds: Annotated[float, Field(gt=0)] = 30.0
-
-    # --- Tokenomics policy (Phase 1 reused) -----------------------------
-
-    max_prompt_tokens: Annotated[int, Field(gt=0)] = 8_000
-    max_prompt_cost_usd: Annotated[Decimal, Field(gt=Decimal("0"))] = Decimal("0.05")
-    allow_unknown_models: bool = True
-
-    # --- Content guardrails (Phase 3) -----------------------------------
-
-    # Default-on: the project's whole purpose is to refuse data egress, and
-    # the scanner is regex-only — there is no performance reason to disable it.
-    enable_secret_scanning: bool = True
-
-    # PII scanning is default-off because it brings a heavyweight transitive
-    # dependency (Presidio + spaCy + a downloaded language model). Operators
-    # opt in explicitly after running the installation steps documented in
-    # README.md.
-    enable_pii_scanning: bool = False
-    # ``block`` refuses to forward when PII is present; ``redact`` rewrites
-    # the prompt and forwards the sanitised version. ``block`` is the safer
-    # default because redaction can occasionally lose meaning the user
-    # needed the model to see.
-    pii_policy: str = "block"
-    pii_score_threshold: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
-
-    # --- FinOps audit plane (Phase 4) -----------------------------------
-
-    # Default-on with the in-memory sink: an observable proxy is the
-    # baseline expectation. Operators that explicitly need a no-op sink
-    # set ``audit_enabled=false``.
-    audit_enabled: bool = True
-    # When set, records are appended to this JSONL file in addition to
-    # the in-memory ring. ``None`` keeps audit purely in-memory.
-    audit_jsonl_path: str | None = None
-    # Size of the in-memory ring buffer used by the stats endpoint
-    # (Phase 4c). Tuned so memory cost stays bounded even on long-lived
-    # workers — a worker pinned at 100 RPS for an hour produces 360k
-    # records, but only the most recent ``audit_memory_capacity`` are kept.
-    audit_memory_capacity: Annotated[int, Field(gt=0)] = 1_000
-
-    # --- Structured logging (Phase 4b) ----------------------------------
-
-    # Default-on: a proxy whose audit ledger is invisible at process level
-    # is operationally useless. Disable only for tests that assert log
-    # silence.
-    audit_log_enabled: bool = True
-    # ``json`` is the production renderer; ``console`` is the colourised
-    # interactive one used during development.
-    log_format: str = "json"
-    log_level: str = "INFO"
-
-    # --- DuckDB audit sink (Phase 4b, optional [duckdb] extra) ----------
-
-    # When set, records are persisted to this DuckDB file in addition to
-    # any other configured sinks. ``None`` skips loading the duckdb
-    # backend entirely — important on environments that did not install
-    # the extra.
-    audit_duckdb_path: str | None = None
-
-    # --- Stats endpoint (Phase 4c) --------------------------------------
-
-    # Read-only ``/stats/*`` surface backed by the in-memory ring. Default-
-    # on because the proxy binds to localhost; operators exposing the
-    # proxy externally should set this to false (or front it with auth).
-    enable_stats_endpoint: bool = True
-
-    # HTML dashboard served at ``/stats/dashboard``. Follows the JSON
-    # endpoints — if those are off, the dashboard cannot work, so the
-    # combined setting expresses the operator-meaningful toggle.
-    enable_dashboard: bool = True
+    network: NetworkSettings = Field(default_factory=NetworkSettings)
+    breaker: BreakerSettings = Field(default_factory=BreakerSettings)
+    tokenomics: TokenomicsSettings = Field(default_factory=TokenomicsSettings)
+    scanning: ScanningSettings = Field(default_factory=ScanningSettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
+    stats: StatsSettings = Field(default_factory=StatsSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
 
 
 def get_settings() -> ProxySettings:

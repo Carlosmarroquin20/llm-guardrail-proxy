@@ -1,23 +1,25 @@
-"""FastAPI application factory.
+"""FastAPI application factory and production wiring.
 
 The factory is deliberately parameterised: every collaborator (settings,
 pipeline, forwarder, audit sink) can be supplied externally. This is what
 makes the proxy testable end-to-end without touching the network and
 reusable as a library — Phase 5's pre-commit integration constructs a
 ``build_app`` variant with no forwarder at all.
+
+Request lifecycle logic lives in :mod:`handler`; this file owns route
+registration, lifespan management, and the production-defaults
+constructor (:func:`create_default_app`).
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
-from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from llm_guardrail_proxy.core import ThresholdPolicy, TokenomicsService
 from llm_guardrail_proxy.proxy.audit import (
@@ -28,21 +30,12 @@ from llm_guardrail_proxy.proxy.audit import (
     JsonlAuditSink,
     LoggingAuditSink,
     NullAuditSink,
-    build_audit_record,
     configure_logging,
 )
 from llm_guardrail_proxy.proxy.circuit_breaker import CircuitBreaker
-from llm_guardrail_proxy.proxy.envelope import (
-    Provider,
-    ProxyRequest,
-    Reject,
-)
-from llm_guardrail_proxy.proxy.exceptions import (
-    PromptExtractionError,
-    ProviderResolutionError,
-    UpstreamError,
-)
+from llm_guardrail_proxy.proxy.envelope import Provider
 from llm_guardrail_proxy.proxy.forwarder import UpstreamForwarder
+from llm_guardrail_proxy.proxy.handler import handle_proxied_request
 from llm_guardrail_proxy.proxy.middleware import Middleware
 from llm_guardrail_proxy.proxy.middlewares import (
     PiiPolicy,
@@ -50,18 +43,13 @@ from llm_guardrail_proxy.proxy.middlewares import (
     SecretScanMiddleware,
     TokenomicsMiddleware,
 )
-from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline, PipelineDecision
-from llm_guardrail_proxy.proxy.providers import resolve_adapter, supported_paths
+from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
+from llm_guardrail_proxy.proxy.providers import supported_paths
 from llm_guardrail_proxy.proxy.scanning import PiiScanner, SecretScanner
 from llm_guardrail_proxy.proxy.settings import ProxySettings
 from llm_guardrail_proxy.proxy.stats import StatsRepository, build_stats_router
 
 _LOGGER = logging.getLogger("llm_guardrail_proxy")
-
-# Header used both to ingest a caller-supplied correlation ID and to echo
-# the generated one back to the client. Lower-case form is what Starlette
-# normalises to internally.
-_REQUEST_ID_HEADER = "x-request-id"
 
 
 def build_app(
@@ -110,11 +98,11 @@ def build_app(
     app.state.audit_sink = sink
     app.state.stats_repository = stats_repository
 
-    if stats_repository is not None and settings.enable_stats_endpoint:
+    if stats_repository is not None and settings.stats.enable_endpoint:
         app.include_router(
             build_stats_router(
                 stats_repository,
-                enable_dashboard=settings.enable_dashboard,
+                enable_dashboard=settings.stats.enable_dashboard,
             )
         )
 
@@ -123,7 +111,7 @@ def build_app(
         return {"status": "ok"}
 
     async def handle(request: Request) -> Response:
-        return await _handle_proxied_request(request)
+        return await handle_proxied_request(request)
 
     # One route per supported path; this gives FastAPI accurate OpenAPI
     # metadata and avoids the catch-all wildcard that would silently swallow
@@ -140,181 +128,13 @@ def build_app(
     return app
 
 
-# --------------------------------------------------------------- handler
-
-
-def _resolve_request_id(request: Request) -> UUID:
-    """Honour an inbound ``X-Request-Id`` when present, else generate one.
-
-    Accepting a caller-supplied identifier lets distributed tracing
-    correlate audit records with upstream logs the client already keeps.
-    Malformed values are ignored silently — a bad header should not cause
-    a 400 because the proxy can always generate a fresh ID.
-    """
-
-    raw = request.headers.get(_REQUEST_ID_HEADER)
-    if raw:
-        try:
-            return UUID(raw)
-        except ValueError:
-            pass
-    return uuid4()
-
-
-async def _handle_proxied_request(request: Request) -> Response:
-    """Inner request handler shared by every protected route.
-
-    The handler is responsible for the full request lifecycle including
-    audit emission. Audit is recorded on every terminating path —
-    rejection, upstream failure, success — so the FinOps ledger can never
-    miss an event. Exactly one record is produced per request.
-    """
-
-    pipeline: MiddlewarePipeline = request.app.state.pipeline
-    forwarder: UpstreamForwarder = request.app.state.forwarder
-    sink: AuditSink = request.app.state.audit_sink
-
-    request_id = _resolve_request_id(request)
-    started_at = time.perf_counter()
-
-    raw_body = await request.body()
-
-    try:
-        adapter = resolve_adapter(request.url.path)
-        parsed = adapter.parse(raw_body)
-    except ProviderResolutionError as exc:
-        # Pre-parse failures do not produce an audit record: there is no
-        # provider, no model, no policy decision — nothing meaningful to
-        # write. The 404 response carries the diagnostic.
-        return JSONResponse(
-            status_code=404,
-            content={"error": "unknown_provider", "detail": str(exc)},
-            headers={_REQUEST_ID_HEADER: str(request_id)},
-        )
-    except PromptExtractionError as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "malformed_request", "detail": str(exc)},
-            headers={_REQUEST_ID_HEADER: str(request_id)},
-        )
-
-    envelope = ProxyRequest(
-        path=request.url.path,
-        method=request.method,
-        headers={k: v for k, v in request.headers.items()},
-        raw_body=raw_body,
-        parsed=parsed,
-    )
-
-    decision = await pipeline.run(envelope)
-
-    if isinstance(decision.outcome, Reject):
-        latency_ms = (time.perf_counter() - started_at) * 1_000
-        await _record_audit(
-            sink,
-            request_id=request_id,
-            request=envelope,
-            decision=decision,
-            latency_ms=latency_ms,
-            upstream_status_code=None,
-            upstream_error=None,
-        )
-        return JSONResponse(
-            status_code=decision.outcome.status_code,
-            content={
-                "error": decision.outcome.reason,
-                "detail": decision.outcome.detail,
-                "middleware": decision.rejecting_middleware,
-                "annotations": decision.annotations,
-                "request_id": str(request_id),
-            },
-            headers={_REQUEST_ID_HEADER: str(request_id)},
-        )
-
-    # ``final_request`` may differ from ``envelope`` if a middleware emitted
-    # ``Mutate`` — the forwarder must ship the rewritten body, not the
-    # original.
-    try:
-        upstream_response = await forwarder.forward(decision.final_request)
-    except UpstreamError as exc:
-        latency_ms = (time.perf_counter() - started_at) * 1_000
-        await _record_audit(
-            sink,
-            request_id=request_id,
-            request=envelope,
-            decision=decision,
-            latency_ms=latency_ms,
-            upstream_status_code=None,
-            upstream_error=str(exc),
-        )
-        return JSONResponse(
-            status_code=502,
-            content={"error": "upstream_unavailable", "detail": str(exc)},
-            headers={_REQUEST_ID_HEADER: str(request_id)},
-        )
-
-    # Audit happens *before* the streaming body drains. Latency here is the
-    # decision-plus-headers latency, not the full-body latency — that is
-    # the figure FinOps actually cares about, and it is also the only one
-    # the proxy can record without holding the response open.
-    latency_ms = (time.perf_counter() - started_at) * 1_000
-    await _record_audit(
-        sink,
-        request_id=request_id,
-        request=envelope,
-        decision=decision,
-        latency_ms=latency_ms,
-        upstream_status_code=upstream_response.status_code,
-        upstream_error=None,
-    )
-
-    # Stamp the correlation header onto the response so clients can
-    # cross-reference their own logs with the audit ledger.
-    upstream_response.headers[_REQUEST_ID_HEADER] = str(request_id)
-    return upstream_response
-
-
-async def _record_audit(
-    sink: AuditSink,
-    *,
-    request_id: UUID,
-    request: ProxyRequest,
-    decision: PipelineDecision,
-    latency_ms: float,
-    upstream_status_code: int | None,
-    upstream_error: str | None,
-) -> None:
-    """Emit a single audit record, swallowing sink-side faults.
-
-    A misbehaving sink (a full disk, a missing parent directory after the
-    process started) must never propagate as a 5xx to the client: audit is
-    secondary to traffic. Errors are logged at WARNING; Phase 4c's
-    observability work can surface them through a metrics counter.
-    """
-
-    record = build_audit_record(
-        request_id=request_id,
-        request=request,
-        decision=decision,
-        latency_ms=latency_ms,
-        upstream_status_code=upstream_status_code,
-        upstream_error=upstream_error,
-    )
-    try:
-        await sink.record(record)
-    except Exception:  # pragma: no cover - defensive
-        _LOGGER.warning(
-            "audit sink rejected record request_id=%s", request_id, exc_info=True
-        )
-
-
 # ----------------------------------------------------- production wiring
 
 
 def _build_audit_sink(
     settings: ProxySettings,
 ) -> tuple[AuditSink, InMemoryAuditSink | None]:
-    """Translate ``settings`` into a concrete sink (or composite of sinks).
+    """Translate ``settings.audit`` into a concrete sink (or composite).
 
     Returns the user-facing :class:`AuditSink` (which may be a composite)
     *and* a direct handle to the in-memory ring that the stats endpoint
@@ -326,17 +146,18 @@ def _build_audit_sink(
     router is then not mounted by :func:`build_app`.
     """
 
-    if not settings.audit_enabled:
+    cfg = settings.audit
+    if not cfg.enabled:
         return NullAuditSink(), None
 
-    memory_sink = InMemoryAuditSink(capacity=settings.audit_memory_capacity)
+    memory_sink = InMemoryAuditSink(capacity=cfg.memory_capacity)
     sinks: list[AuditSink] = [memory_sink]
-    if settings.audit_log_enabled:
+    if cfg.log_enabled:
         sinks.append(LoggingAuditSink())
-    if settings.audit_jsonl_path:
-        sinks.append(JsonlAuditSink(settings.audit_jsonl_path))
-    if settings.audit_duckdb_path:
-        sinks.append(DuckdbAuditSink(settings.audit_duckdb_path))
+    if cfg.jsonl_path:
+        sinks.append(JsonlAuditSink(cfg.jsonl_path))
+    if cfg.duckdb_path:
+        sinks.append(DuckdbAuditSink(cfg.duckdb_path))
 
     composite: AuditSink = sinks[0] if len(sinks) == 1 else CompositeAuditSink(sinks)
     return composite, memory_sink
@@ -356,15 +177,18 @@ def create_default_app() -> FastAPI:
     # by ``_build_audit_sink`` — finds a properly initialised structlog
     # stack. Tests skip this call: they assert against the per-record
     # contract, not the on-the-wire log format.
-    if settings.audit_log_enabled:
+    if settings.audit.log_enabled:
         configure_logging(
-            json=settings.log_format.lower() == "json",
-            level=logging.getLevelName(settings.log_level.upper()),
+            json=settings.logging.format.lower() == "json",
+            level=logging.getLevelName(settings.logging.level.upper()),
         )
-    service = TokenomicsService(allow_unknown_models=settings.allow_unknown_models)
+
+    service = TokenomicsService(
+        allow_unknown_models=settings.tokenomics.allow_unknown_models,
+    )
     policy = ThresholdPolicy(
-        max_tokens=settings.max_prompt_tokens,
-        max_cost_usd=settings.max_prompt_cost_usd,
+        max_tokens=settings.tokenomics.max_prompt_tokens,
+        max_cost_usd=settings.tokenomics.max_prompt_cost_usd,
     )
 
     # Pipeline order is significant. Security-class verdicts (secret then
@@ -374,29 +198,31 @@ def create_default_app() -> FastAPI:
     # categorically worse: PII can sometimes be redacted in-place, but a
     # leaked API key cannot.
     middlewares: list[Middleware] = []
-    if settings.enable_secret_scanning:
+    if settings.scanning.enable_secrets:
         middlewares.append(SecretScanMiddleware(scanner=SecretScanner()))
-    if settings.enable_pii_scanning:
+    if settings.scanning.enable_pii:
         middlewares.append(
             PiiScanMiddleware(
-                scanner=PiiScanner(score_threshold=settings.pii_score_threshold),
-                policy=PiiPolicy(settings.pii_policy),
+                scanner=PiiScanner(
+                    score_threshold=settings.scanning.pii_score_threshold,
+                ),
+                policy=PiiPolicy(settings.scanning.pii_policy),
             )
         )
     middlewares.append(TokenomicsMiddleware(service=service, policy=policy))
     pipeline = MiddlewarePipeline(middlewares)
 
-    client = httpx.AsyncClient(timeout=settings.upstream_timeout_seconds)
+    client = httpx.AsyncClient(timeout=settings.network.upstream_timeout_seconds)
     breaker = CircuitBreaker(
-        failure_threshold=settings.breaker_failure_threshold,
-        reset_seconds=settings.breaker_reset_seconds,
+        failure_threshold=settings.breaker.failure_threshold,
+        reset_seconds=settings.breaker.reset_seconds,
     )
     forwarder = UpstreamForwarder(
         client=client,
         breaker=breaker,
         origins={
-            Provider.OPENAI: str(settings.openai_base_url),
-            Provider.ANTHROPIC: str(settings.anthropic_base_url),
+            Provider.OPENAI: str(settings.network.openai_base_url),
+            Provider.ANTHROPIC: str(settings.network.anthropic_base_url),
         },
     )
 

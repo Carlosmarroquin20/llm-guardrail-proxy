@@ -69,3 +69,26 @@ class ScanFinding:
     severity: Severity
     span: tuple[int, int]
     preview: str
+
+    def as_dict(self) -> dict[str, object]:
+        """Return an audit-safe dict representation.
+
+        This is the canonical projection used by every middleware that
+        emits findings into the pipeline's annotation map. Adding a new
+        field to :class:`ScanFinding` requires updating this method
+        once, not in each middleware — the previous duplication of
+        per-middleware ``_serialise`` helpers is what this method
+        replaces.
+
+        The shape is stable: ``test_finding_payload_omits_raw_value``
+        and the Phase 4 audit ledger depend on the exact keys produced
+        here. Add fields freely; rename or remove with care.
+        """
+
+        return {
+            "kind": self.kind,
+            "label": self.label,
+            "severity": self.severity.value,
+            "span": list(self.span),
+            "preview": self.preview,
+        }

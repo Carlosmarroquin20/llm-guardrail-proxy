@@ -39,7 +39,9 @@ src/llm_guardrail_proxy/
     tokenomics.py         TokenomicsService (sync, CPU-bound).
   config/thresholds.py    Conservative default ThresholdPolicy.
   proxy/                  Async ASGI surface. Phase 2.
-    settings.py           pydantic-settings, GUARDRAIL_* env prefix.
+    settings.py           Nested pydantic-settings groups (network,
+                          breaker, tokenomics, scanning, audit, stats,
+                          logging) — GUARDRAIL_<group>__<field> env vars.
     envelope.py           ProxyRequest, ParsedPrompt, Continue|Reject|Mutate.
     providers.py          OpenAI Chat + Anthropic adapters (parse + redact).
     middleware.py         Middleware Protocol (structural).
@@ -50,6 +52,8 @@ src/llm_guardrail_proxy/
     pipeline.py           MiddlewarePipeline orchestrator + Mutate handling.
     circuit_breaker.py    CLOSED→OPEN→HALF_OPEN async breaker.
     forwarder.py          httpx streaming relay + hop-by-hop filter.
+    handler.py            Per-request lifecycle: parse → pipeline → audit
+                          → forward. Single audit emission site.
     app.py                FastAPI factory (build_app + create_default_app).
     scanning/             Content-scanning primitives.
       findings.py           Severity + ScanFinding value objects.
@@ -184,10 +188,11 @@ Last verified runs:
   Over-redaction is benign; under-redaction is a leak. Do not "optimise" to
   replace only the matched span.
 - **Audit is transport-layer, not middleware-layer.** Recording happens
-  inside `_handle_proxied_request` in `app.py`, not in a middleware,
-  because audit needs the `upstream_status_code` and total latency that no
-  single middleware can observe. Don't try to refactor it into a "logging
-  middleware" — the pipeline contract has no terminal hook.
+  inside `handle_proxied_request` in `proxy/handler.py`, not in a
+  middleware, because audit needs the `upstream_status_code` and total
+  latency that no single middleware can observe. Don't try to refactor
+  it into a "logging middleware" — the pipeline contract has no terminal
+  hook.
 - **`AuditRecord` never carries raw prompts or full secret/PII values.**
   Only redacted previews emitted by the scanners. If you add a new field
   that could plausibly carry sensitive content, the audit plane has to be
@@ -243,6 +248,16 @@ Last verified runs:
 - **Dashboard HTML is embedded as a Python string constant, not a
   bundled asset.** Avoids `package_data` / `MANIFEST.in` configuration
   drift in the wheel; the markup is always shipped with the code.
+- **Findings serialise via `ScanFinding.as_dict()` — single source of
+  truth.** Adding a field to `ScanFinding` updates the audit shape
+  everywhere automatically. Do not re-introduce per-middleware
+  `_serialise` helpers; the duplication they create is exactly what
+  this method exists to prevent.
+- **Settings are nested by concern, not flat.** Access is
+  `settings.audit.jsonl_path`, not `settings.audit_jsonl_path`. Env
+  vars use the double-underscore delimiter:
+  `GUARDRAIL_AUDIT__JSONL_PATH`. Tests construct via dict-init:
+  `ProxySettings(network={"openai_base_url": "..."})`.
 - **The CLI ignores `GUARDRAIL_*` environment variables on purpose.**
   Flags are the only configuration surface — a pre-commit hook whose
   behaviour drifts with the developer's shell becomes unreproducible

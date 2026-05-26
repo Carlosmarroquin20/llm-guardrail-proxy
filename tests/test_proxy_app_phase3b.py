@@ -63,8 +63,10 @@ def _build(*, policy: PiiPolicy, scanner: PiiScanner, upstream_handler):
     ]
     pipeline = MiddlewarePipeline(middlewares)
     settings = ProxySettings(
-        openai_base_url="https://upstream-openai.test",
-        anthropic_base_url="https://upstream-anthropic.test",
+        network={
+            "openai_base_url": "https://upstream-openai.test",
+            "anthropic_base_url": "https://upstream-anthropic.test",
+        },
     )
     app = build_app(settings=settings, pipeline=pipeline, forwarder=forwarder)
     test_client = httpx.AsyncClient(

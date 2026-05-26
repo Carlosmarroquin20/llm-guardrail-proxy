@@ -41,11 +41,11 @@ def _run_smoke() -> int:
         LOG_FILE.unlink()
 
     env = os.environ.copy()
-    env["GUARDRAIL_LISTEN_PORT"] = str(PORT)
-    env["GUARDRAIL_ENABLE_PII_SCANNING"] = "false"
-    env["GUARDRAIL_LOG_FORMAT"] = "json"
+    env["GUARDRAIL_NETWORK__LISTEN_PORT"] = str(PORT)
+    env["GUARDRAIL_SCANNING__ENABLE_PII"] = "false"
+    env["GUARDRAIL_LOGGING__FORMAT"] = "json"
     # Stats endpoint is default-on, but pin it explicitly for clarity.
-    env["GUARDRAIL_ENABLE_STATS_ENDPOINT"] = "true"
+    env["GUARDRAIL_STATS__ENABLE_ENDPOINT"] = "true"
 
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if not python.exists():

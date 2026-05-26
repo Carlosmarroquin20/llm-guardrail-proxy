@@ -65,8 +65,10 @@ def _build_with_secret_scanning(
     pipeline = MiddlewarePipeline(chain)
 
     settings = ProxySettings(
-        openai_base_url="https://upstream-openai.test",
-        anthropic_base_url="https://upstream-anthropic.test",
+        network={
+            "openai_base_url": "https://upstream-openai.test",
+            "anthropic_base_url": "https://upstream-anthropic.test",
+        },
     )
     app = build_app(settings=settings, pipeline=pipeline, forwarder=forwarder)
     test_client = httpx.AsyncClient(
@@ -156,8 +158,10 @@ class TestMiddlewareOrdering:
             ]
         )
         settings = ProxySettings(
-            openai_base_url="https://upstream-openai.test",
-            anthropic_base_url="https://upstream-anthropic.test",
+            network={
+                "openai_base_url": "https://upstream-openai.test",
+                "anthropic_base_url": "https://upstream-anthropic.test",
+            },
         )
         app = build_app(settings=settings, pipeline=pipeline, forwarder=forwarder)
         client = httpx.AsyncClient(

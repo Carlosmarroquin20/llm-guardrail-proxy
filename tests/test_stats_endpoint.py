@@ -49,9 +49,11 @@ def _build(
 
     sink = InMemoryAuditSink(capacity=50)
     settings = ProxySettings(
-        openai_base_url="https://upstream-openai.test",
-        anthropic_base_url="https://upstream-anthropic.test",
-        enable_stats_endpoint=enable_stats,
+        network={
+            "openai_base_url": "https://upstream-openai.test",
+            "anthropic_base_url": "https://upstream-anthropic.test",
+        },
+        stats={"enable_endpoint": enable_stats},
     )
     app = build_app(
         settings=settings,
@@ -342,9 +344,11 @@ class TestDashboardEndpoint:
             ]
         )
         settings = ProxySettings(
-            openai_base_url="https://upstream-openai.test",
-            anthropic_base_url="https://upstream-anthropic.test",
-            enable_dashboard=False,
+            network={
+                "openai_base_url": "https://upstream-openai.test",
+                "anthropic_base_url": "https://upstream-anthropic.test",
+            },
+            stats={"enable_dashboard": False},
         )
         app = build_app(
             settings=settings,
