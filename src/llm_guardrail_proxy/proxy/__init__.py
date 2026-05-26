@@ -12,26 +12,27 @@ The proxy layer is structured around three orthogonal seams:
 
 Phase 3+ extensions (PII, secret scanning, audit) plug in as additional
 middleware without touching the orchestrator.
+
+Public surface
+==============
+
+This module re-exports only the entry points needed to *run* the proxy
+(``build_app``, ``create_default_app``, ``ProxySettings``) and the
+extension surface needed to *write a custom middleware* (the envelope
+types, the ``Middleware`` Protocol, and ``MiddlewarePipeline``).
+
+Internal machinery — audit sinks, stats aggregators, parsed prompt
+values, finding records — is *not* re-exported. Importing those from
+their owning sub-module (``proxy.audit``, ``proxy.stats``,
+``proxy.envelope``) is the supported path; the narrower surface here
+keeps it obvious which names belong to the public API.
 """
 
 from llm_guardrail_proxy.proxy.app import build_app, create_default_app
-from llm_guardrail_proxy.proxy.audit import (
-    AuditRecord,
-    AuditSink,
-    CompositeAuditSink,
-    DuckdbAuditSink,
-    EnforcementVerdict,
-    InMemoryAuditSink,
-    JsonlAuditSink,
-    LoggingAuditSink,
-    NullAuditSink,
-    configure_logging,
-)
 from llm_guardrail_proxy.proxy.envelope import (
     Continue,
     MiddlewareOutcome,
     Mutate,
-    ParsedPrompt,
     Provider,
     ProxyRequest,
     Reject,
@@ -39,32 +40,21 @@ from llm_guardrail_proxy.proxy.envelope import (
 from llm_guardrail_proxy.proxy.middleware import Middleware
 from llm_guardrail_proxy.proxy.pipeline import MiddlewarePipeline
 from llm_guardrail_proxy.proxy.settings import ProxySettings
-from llm_guardrail_proxy.proxy.stats import StatsRepository, StatsSummary, summarise
 
 __all__ = [
-    "AuditRecord",
-    "AuditSink",
-    "CompositeAuditSink",
-    "Continue",
-    "DuckdbAuditSink",
-    "EnforcementVerdict",
-    "InMemoryAuditSink",
-    "JsonlAuditSink",
-    "LoggingAuditSink",
+    # Factories
+    "build_app",
+    "create_default_app",
+    # Configuration
+    "ProxySettings",
+    # Pipeline contract
     "Middleware",
-    "MiddlewareOutcome",
     "MiddlewarePipeline",
+    # Middleware-authoring surface
+    "Continue",
+    "MiddlewareOutcome",
     "Mutate",
-    "NullAuditSink",
-    "ParsedPrompt",
     "Provider",
     "ProxyRequest",
-    "ProxySettings",
     "Reject",
-    "StatsRepository",
-    "StatsSummary",
-    "build_app",
-    "configure_logging",
-    "create_default_app",
-    "summarise",
 ]

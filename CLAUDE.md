@@ -258,6 +258,15 @@ Last verified runs:
   vars use the double-underscore delimiter:
   `GUARDRAIL_AUDIT__JSONL_PATH`. Tests construct via dict-init:
   `ProxySettings(network={"openai_base_url": "..."})`.
+- **`proxy/__init__.py` re-exports the narrow public surface only**
+  (factories, settings, pipeline contract, middleware-authoring
+  envelope types). Internal machinery — audit sinks, stats
+  aggregators, finding records, parsed prompts — is *not* re-exported
+  there; import from the owning sub-module
+  (`proxy.audit`, `proxy.stats`, `proxy.envelope`). The
+  `__init__.py` files of those sub-modules ARE load-bearing — 42
+  import sites in the codebase reference them, so do not prune them
+  the same way.
 - **The CLI ignores `GUARDRAIL_*` environment variables on purpose.**
   Flags are the only configuration surface — a pre-commit hook whose
   behaviour drifts with the developer's shell becomes unreproducible
