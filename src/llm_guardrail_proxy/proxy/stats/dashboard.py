@@ -28,6 +28,13 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>llm-guardrail-proxy</title>
+  <!--
+    Inline SVG favicon. The ``xmlns`` declares the SVG namespace; it is
+    NOT a fetched resource — browsers do not load anything from that URI.
+    The dashboard contract is still zero-egress; the test allow-lists this
+    specific namespace declaration.
+  -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Cpath fill=%27%2358a6ff%27 d=%27M8 1 L14 4 V8 C14 11 11 14 8 15 C5 14 2 11 2 8 V4 Z%27/%3E%3C/svg%3E" />
   <style>
     :root {
       --bg: #0f1419;
@@ -66,14 +73,31 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       gap: 1rem;
       flex-wrap: wrap;
     }
-    h1 { font-size: 1.25rem; margin: 0; font-weight: 600; }
+    h1 {
+      font-size: 1.5rem;
+      margin: 0;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
     h2 {
       font-size: 0.8125rem;
-      margin: 1.75rem 0 0.75rem;
+      margin: 2.25rem 0 0.875rem;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.08em;
       font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    /* Decorative trailing line after the section title gives each h2 a
+       clear visual termination — a low-noise replacement for full
+       section dividers that would dominate the layout. */
+    h2::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border);
     }
     .meta {
       font-family: var(--mono);
@@ -104,9 +128,33 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0.875rem 1rem;
+      padding: 0.875rem 1rem 0.875rem 1.125rem;
       position: relative;
       overflow: hidden;
+      transition: background 0.15s ease, border-color 0.15s ease,
+                  transform 0.15s ease;
+    }
+    /* Coloured left stripe — instantly scannable indicator of which
+       metric is which without reading the label. Default is neutral
+       (border colour); per-card classes override it below. */
+    .card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: var(--border-strong);
+      transition: background 0.15s ease;
+    }
+    .card.accent-ok::before { background: var(--ok); }
+    .card.accent-warn::before { background: var(--warn); }
+    .card.accent-danger::before { background: var(--danger); }
+    .card.accent-info::before { background: var(--accent); }
+    .card:hover {
+      background: var(--panel-hover);
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
     }
     .card .label {
       font-size: 0.75rem;
@@ -120,6 +168,7 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       font-weight: 600;
       margin-top: 0.25rem;
       line-height: 1.2;
+      transition: color 0.2s ease;
     }
     .card .value.ok { color: var(--ok); }
     .card .value.warn { color: var(--warn); }
@@ -144,11 +193,13 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       padding: 0.875rem 1rem 1rem;
     }
     .breakdown-section .title {
-      font-size: 0.75rem;
+      font-size: 0.6875rem;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
       color: var(--muted);
-      margin-bottom: 0.625rem;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+      opacity: 0.85;
     }
     .bar-row {
       display: grid;
@@ -208,6 +259,9 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       border-bottom: 1px solid var(--border-strong);
       position: sticky;
       top: 0;
+      /* Subtle shadow keeps the sticky header visually detached from
+         table rows scrolling underneath. */
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
     }
     tbody td {
       padding: 0.5rem 0.75rem;
@@ -215,8 +269,24 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       vertical-align: top;
     }
     tbody tr:last-child td { border-bottom: none; }
+    tbody tr { transition: background 0.1s ease; }
     tbody tr:hover { background: var(--panel-hover); }
     .table-wrap.paused tbody tr:hover { outline: 1px solid var(--accent); }
+
+    /* "paused" indicator badge in the Recent requests header */
+    .paused-badge {
+      display: none;
+      font-family: var(--mono);
+      font-size: 0.6875rem;
+      color: var(--accent);
+      background: rgba(88, 166, 255, 0.12);
+      padding: 0.125rem 0.5rem;
+      border-radius: 999px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .recent-paused .paused-badge { display: inline-block; }
 
     /* ---------------------- chips ------------------------------ */
     .chip {
@@ -268,7 +338,24 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
     }
-    .num { font-variant-numeric: tabular-nums; }
+    .num {
+      font-variant-numeric: tabular-nums;
+      /* Numeric cells should never wrap — "$0.001234" or "12.34 ms"
+         broken across two lines is illegible in a scanning context. */
+      white-space: nowrap;
+    }
+
+    /* ---------------------- footer ---------------------------- */
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-align: center;
+      font-family: var(--mono);
+      letter-spacing: 0.04em;
+    }
 
     @media (max-width: 600px) {
       body { padding: 1rem; }
@@ -290,12 +377,12 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
   <section>
     <div class="grid" id="summary-cards">
       <!-- Skeleton initial state — replaced on first successful refresh. -->
-      <div class="card"><div class="label">total requests</div><div class="value skeleton">000</div></div>
-      <div class="card"><div class="label">allowed</div><div class="value skeleton">000</div></div>
+      <div class="card accent-info"><div class="label">total requests</div><div class="value skeleton">000</div></div>
+      <div class="card accent-ok"><div class="label">allowed</div><div class="value skeleton">000</div></div>
       <div class="card"><div class="label">rejected</div><div class="value skeleton">000</div></div>
       <div class="card"><div class="label">rejection rate</div><div class="value skeleton">00.0%</div></div>
-      <div class="card"><div class="label">estimated cost</div><div class="value skeleton">$0.00</div></div>
-      <div class="card"><div class="label">avg latency</div><div class="value skeleton">000 ms</div></div>
+      <div class="card accent-info"><div class="label">estimated cost</div><div class="value skeleton">$0.00</div></div>
+      <div class="card accent-info"><div class="label">avg latency</div><div class="value skeleton">000 ms</div></div>
     </div>
   </section>
 
@@ -304,8 +391,11 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
     <div class="breakdown" id="breakdown"></div>
   </section>
 
-  <section>
-    <h2>Recent requests</h2>
+  <section id="recent-section">
+    <h2>
+      Recent requests
+      <span class="paused-badge" title="Auto-refresh is paused while the cursor hovers the table">paused</span>
+    </h2>
     <div class="table-wrap" id="table-wrap">
       <table>
         <thead>
@@ -327,6 +417,8 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
       </table>
     </div>
   </section>
+
+  <footer>llm-guardrail-proxy &middot; zero-egress &middot; localhost only</footer>
 
   <script>
     // -------- formatting helpers ------------------------------------
@@ -365,10 +457,16 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
     };
 
     // -------- DOM builders -----------------------------------------
-    function card(label, value, klass, sub) {
-      return `<div class="card">
+    function card(label, value, valueClass, sub, accent) {
+      // ``valueClass`` colours the number (ok/warn/danger).
+      // ``accent`` colours the 3px left stripe on the card itself.
+      // They are usually but not always the same — ``total requests``,
+      // for example, has no semantic colour for its number but still
+      // benefits from an info-tinted accent stripe.
+      const accentClass = accent ? `accent-${accent}` : '';
+      return `<div class="card ${accentClass}">
         <div class="label">${label}</div>
-        <div class="value ${klass || ''}">${value}</div>
+        <div class="value ${valueClass || ''}">${value}</div>
         ${sub ? `<div class="sub">${sub}</div>` : ''}
       </div>`;
     }
@@ -378,25 +476,29 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
     }
 
     function renderSummary(s) {
+      const rejectionAccent =
+        s.rejection_rate > 0.1 ? 'danger'
+        : s.rejection_rate > 0 ? 'warn'
+        : 'ok';
       const cards = [
-        card('total requests', s.total_requests.toLocaleString()),
-        card('allowed', s.allowed.toLocaleString(), 'ok'),
+        card('total requests', s.total_requests.toLocaleString(), '', '', 'info'),
+        card('allowed', s.allowed.toLocaleString(), 'ok', '', 'ok'),
         card(
           'rejected',
           s.rejected.toLocaleString(),
           s.rejected > 0 ? 'danger' : '',
+          '',
+          s.rejected > 0 ? 'danger' : null,
         ),
         card(
           'rejection rate',
           fmt.percent(s.rejection_rate),
-          s.rejection_rate > 0.1
-            ? 'danger'
-            : s.rejection_rate > 0
-            ? 'warn'
-            : 'ok',
+          rejectionAccent,
+          '',
+          rejectionAccent,
         ),
-        card('estimated cost', fmt.cost(s.total_estimated_cost_usd), '', 'usd'),
-        card('avg latency', fmt.latency(s.avg_latency_ms)),
+        card('estimated cost', fmt.cost(s.total_estimated_cost_usd), '', 'usd', 'info'),
+        card('avg latency', fmt.latency(s.avg_latency_ms), '', '', 'info'),
       ];
       document.getElementById('summary-cards').innerHTML = cards.join('');
     }
@@ -477,29 +579,52 @@ DASHBOARD_HTML: str = """<!DOCTYPE html>
     const lastUpdatedEl = document.getElementById('last-updated');
 
     // Pause-on-hover: while the user's mouse is over the recent table,
-    // skip refreshes so a row does not vanish under the cursor.
+    // skip refreshes so a row does not vanish under the cursor. The
+    // ``recent-paused`` class on the section reveals the "paused" badge
+    // next to the heading so the state is unambiguously visible.
+    const recentSection = document.getElementById('recent-section');
     let paused = false;
     tableWrap.addEventListener('mouseenter', () => {
       paused = true;
       tableWrap.classList.add('paused');
+      recentSection.classList.add('recent-paused');
     });
     tableWrap.addEventListener('mouseleave', () => {
       paused = false;
       tableWrap.classList.remove('paused');
+      recentSection.classList.remove('recent-paused');
     });
 
     let lastSuccessAt = 0;
+
+    // Base title without status prefix; used to restore it after errors.
+    const BASE_TITLE = 'llm-guardrail-proxy';
+
+    function setTabStatus(kind) {
+      // ``kind`` is one of "live", "stale", "error". The prefix is what
+      // an operator sees in a background tab; nothing else surfaces a
+      // refresh failure when the dashboard is not in the foreground.
+      const prefix = kind === 'error' ? '⚠ ' : kind === 'stale' ? '◌ ' : '';
+      document.title = prefix + BASE_TITLE;
+    }
 
     function updateStatus() {
       const now = Date.now();
       if (lastSuccessAt === 0) return;
       const age = now - lastSuccessAt;
-      statusDot.classList.remove('stale', 'error');
-      if (age > STALE_AFTER_MS) {
+      // ``error`` is set inside ``refresh()`` on a fetch failure and
+      // cleared on the next success; do not clobber it here.
+      const isError = statusDot.classList.contains('error');
+      statusDot.classList.remove('stale');
+      if (isError) {
+        setTabStatus('error');
+      } else if (age > STALE_AFTER_MS) {
         statusDot.classList.add('stale');
         statusDot.title = `stale — last update ${Math.floor(age / 1000)}s ago`;
+        setTabStatus('stale');
       } else {
         statusDot.title = 'live';
+        setTabStatus('live');
       }
       lastUpdatedEl.textContent = 'updated ' + fmt.relative(new Date(lastSuccessAt).toISOString());
     }

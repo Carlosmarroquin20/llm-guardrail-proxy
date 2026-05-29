@@ -71,7 +71,10 @@ src/llm_guardrail_proxy/
       router.py             FastAPI router for /stats/summary + /stats/recent.
       dashboard.py          Embedded self-contained HTML at /stats/dashboard.
   cli/                    Shift-left CLI (Phase 5a-b).
-    scan.py                 main(argv) + cli() entry, batch & single modes.
+    scan.py                 Thin orchestrator: exit codes + main(argv) + cli().
+    parser.py               argparse setup.
+    inputs.py               File / text / stdin → ProxyRequest.
+    runner.py               Pipeline construction + sequential execution.
     formatters.py           JSON / text renderers, single and batch shapes.
     __main__.py             Enables ``python -m llm_guardrail_proxy.cli``.
 .pre-commit-hooks.yaml    Phase 5b: hook metadata for downstream repos.

@@ -276,11 +276,58 @@ class TestDashboardEndpoint:
             await client.aclose()
             await upstream.aclose()
         body = response.text
-        # ``http://127.0.0.1`` and ``http://proxy.test`` would be okay,
-        # but the dashboard uses *relative* fetches, so any ``http(s)``
-        # at all signals a regression.
-        assert "http://" not in body
-        assert "https://" not in body
+        # XML namespace declarations are *not* network resources —
+        # browsers never fetch from a namespace URI. The inline SVG
+        # favicon legitimately needs ``xmlns="http://www.w3.org/2000/svg"``.
+        # Strip those before checking; anything else under ``http(s)://``
+        # would be a regression.
+        sanitised = body.replace("http://www.w3.org/2000/svg", "")
+        assert "http://" not in sanitised
+        assert "https://" not in sanitised
+
+    async def test_dashboard_renders_accent_and_paused_badge(self) -> None:
+        # Pin the second round of visual polish: per-card accent stripes,
+        # transitions, and the paused badge inside the Recent header.
+        client, upstream, _ = _build(
+            upstream_handler=lambda r: httpx.Response(200, json={})
+        )
+        try:
+            response = await client.get("/stats/dashboard")
+        finally:
+            await client.aclose()
+            await upstream.aclose()
+        body = response.text
+        # Accent stripe classes — at least one of each kind must be
+        # produced by the JS renderer or the initial skeleton markup.
+        for accent in ("accent-ok", "accent-info"):
+            assert accent in body, f"missing accent class {accent!r}"
+        # Paused badge structure: a `.paused-badge` span exists in the
+        # Recent header, gated by a parent `.recent-paused` class.
+        assert 'class="paused-badge"' in body
+        assert 'id="recent-section"' in body
+        assert "recent-paused" in body  # toggled by the JS
+
+    async def test_dashboard_includes_inline_favicon_and_footer(self) -> None:
+        # Cosmetic but stable: the dashboard ships with an inline SVG
+        # favicon and a project-name footer. A refactor that drops
+        # either is allowed, but should be a deliberate decision —
+        # failing here keeps it visible.
+        client, upstream, _ = _build(
+            upstream_handler=lambda r: httpx.Response(200, json={})
+        )
+        try:
+            response = await client.get("/stats/dashboard")
+        finally:
+            await client.aclose()
+            await upstream.aclose()
+        body = response.text
+        assert 'rel="icon"' in body
+        # The favicon must be an inline data URI — a ``href="/favicon.ico"``
+        # would breach zero-egress (the browser would request a file we
+        # do not serve).
+        assert 'href="data:image/svg+xml,' in body
+        assert "<footer>" in body
+        assert "llm-guardrail-proxy" in body  # footer text
 
     async def test_dashboard_renders_polished_anchors(self) -> None:
         # Pin the upgraded visual contract introduced after the base

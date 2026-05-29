@@ -100,7 +100,10 @@ def _run_smoke() -> int:
                 "/stats/recent",
             ):
                 assert anchor in body, f"missing dashboard anchor {anchor!r}"
-            assert "http://" not in body and "https://" not in body, (
+            # Strip the SVG namespace declaration before the check — it
+            # is not a fetched resource. See test_dashboard_loads_no_external_assets.
+            sanitised = body.replace("http://www.w3.org/2000/svg", "")
+            assert "http://" not in sanitised and "https://" not in sanitised, (
                 "dashboard references an external origin — zero-egress breach"
             )
             # The raw secret must not appear in the HTML either; even
