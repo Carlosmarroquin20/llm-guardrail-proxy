@@ -20,6 +20,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from llm_guardrail_proxy.proxy.envelope import (
     ParsedPrompt,
@@ -37,7 +38,7 @@ _CLI_PATH = "cli:scan"
 _CLI_METHOD = "CLI"
 
 
-def detect_provider(payload: dict) -> Provider:
+def detect_provider(payload: dict[str, Any]) -> Provider:
     """Best-effort provider detection from a parsed JSON body.
 
     The signal set is narrow on purpose: false detection is silent

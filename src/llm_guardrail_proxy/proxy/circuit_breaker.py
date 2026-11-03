@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Awaitable, Callable, TypeVar
+from typing import TypeVar
 
 from llm_guardrail_proxy.proxy.exceptions import CircuitOpenError
 

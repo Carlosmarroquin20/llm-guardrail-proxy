@@ -29,7 +29,7 @@ class Severity(str, Enum):
     def rank(self) -> int:
         return _SEVERITY_RANK[self]
 
-    def __lt__(self, other: object) -> bool:  # type: ignore[override]
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, Severity):
             return NotImplemented
         return self.rank < other.rank

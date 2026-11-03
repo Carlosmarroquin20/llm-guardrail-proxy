@@ -8,3 +8,6 @@
 pytest==8.3.3
 pytest-asyncio==0.24.0
 pytest-cov==5.0.0
+
+ruff==0.17.3
+mypy==2.4.1

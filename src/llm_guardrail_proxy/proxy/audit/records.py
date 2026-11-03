@@ -13,10 +13,11 @@ Decimal as a JSON string to avoid float drift through the JSONL sink.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -200,5 +201,5 @@ def build_audit_record(
 
 # Re-exported so callers can build ad-hoc records without importing typing
 # internals. Kept at module bottom because it is purely a convenience alias.
-def _iter_records(records: Iterable[AuditRecord]) -> tuple[AuditRecord, ...]:  # noqa: D401
+def _iter_records(records: Iterable[AuditRecord]) -> tuple[AuditRecord, ...]:
     return tuple(records)

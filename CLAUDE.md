@@ -124,7 +124,14 @@ Virtual environment lives at **`.venv/`** (already created, Python 3.10.11).
 ```powershell
 .\.venv\Scripts\python.exe -m pytest             # full suite, ~2s
 .\.venv\Scripts\python.exe -m llm_guardrail_proxy   # launch on 127.0.0.1:8080
+.\.venv\Scripts\ruff.exe check src tests scripts    # lint (CI gate)
+.\.venv\Scripts\mypy.exe                             # strict, src/ only (CI gate)
 ```
+
+`ruff format` is deliberately **not** enforced — adopting it would rewrite
+~45 files for no behavioural gain. Protocol attributes (`Middleware.name`,
+`ProviderAdapter.provider`) are declared as read-only `@property` so frozen
+dataclasses satisfy them under mypy strict; keep that shape.
 
 VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).

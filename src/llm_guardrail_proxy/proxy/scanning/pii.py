@@ -15,7 +15,8 @@ pipeline treat detection as a single concept regardless of backend.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from llm_guardrail_proxy.proxy.scanning.findings import ScanFinding, Severity
 

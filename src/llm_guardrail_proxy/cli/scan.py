@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 from llm_guardrail_proxy.cli.formatters import (
     render_batch_json,

@@ -10,8 +10,9 @@ spinning up the ASGI stack.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable, Sequence
 from decimal import Decimal
-from typing import Iterable, Protocol, Sequence, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 

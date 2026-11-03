@@ -7,7 +7,7 @@ across every request worker.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from llm_guardrail_proxy.proxy.scanning.findings import ScanFinding
 from llm_guardrail_proxy.proxy.scanning.patterns import (

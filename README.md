@@ -3,6 +3,8 @@
 [![CI](https://github.com/Carlosmarroquin20/llm-guardrail-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Carlosmarroquin20/llm-guardrail-proxy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 
 A local reverse proxy that sits between your code and the OpenAI / Anthropic
 APIs and inspects every prompt before it leaves your machine. It blocks
@@ -189,7 +191,7 @@ jobs:
   guardrail:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Carlosmarroquin20/llm-guardrail-proxy@v0.5.0
         with:
           files: "prompts/**/*.json"
@@ -257,12 +259,14 @@ cd llm-guardrail-proxy
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"        # add ,duckdb and/or ,pii for the optional extras
 pytest
+ruff check src tests scripts
+mypy                           # strict mode, configured in pyproject.toml
 ```
 
 The suite has 241 tests and runs without network access; PII and DuckDB tests
-are skipped when those extras are not installed. CI runs it on Python 3.10,
-3.11 and 3.12, plus a job with the PII extra and a job that runs the GitHub
-Action against this repository.
+are skipped when those extras are not installed. CI runs ruff and mypy, the
+tests on Python 3.10, 3.11 and 3.12, a job with the PII extra, and a job that
+runs the GitHub Action against this repository.
 
 The scripts in `scripts/` start a real server and check the audit log, stats
 endpoints, dashboard and CLI end to end, e.g. `python scripts/smoke_phase4.py`.

@@ -12,10 +12,10 @@ JSON manifest, but Phase 1 keeps the dependency surface zero.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Mapping
 
 from llm_guardrail_proxy.core.exceptions import PricingError
 

@@ -122,7 +122,7 @@ def _run_smoke() -> int:
                 f"{BASE_URL}/stats/recent?limit=1", timeout=5
             ).json()
             assert len(small) == 1
-            print(f"  /stats/recent?limit=1: returned 1 record")
+            print("  /stats/recent?limit=1: returned 1 record")
 
             print("\nSMOKE OK")
             return 0

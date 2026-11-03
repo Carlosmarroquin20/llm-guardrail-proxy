@@ -40,7 +40,7 @@ class ThresholdPolicy(BaseModel):
     max_tokens: Annotated[int, Field(gt=0)] | None = None
     max_cost_usd: Annotated[Decimal, Field(gt=Decimal("0"))] | None = None
 
-    def model_post_init(self, __context: object) -> None:  # noqa: D401
+    def model_post_init(self, __context: object) -> None:
         if self.max_tokens is None and self.max_cost_usd is None:
             raise ValueError(
                 "ThresholdPolicy requires at least one of "

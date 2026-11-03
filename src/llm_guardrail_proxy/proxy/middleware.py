@@ -24,7 +24,10 @@ class Middleware(Protocol):
     Python class names that may legitimately be renamed during refactors.
     """
 
-    name: str
+    # Declared as a read-only property so frozen dataclasses (whose fields
+    # cannot be reassigned) satisfy the protocol; the pipeline only reads it.
+    @property
+    def name(self) -> str: ...
 
     async def process(self, request: ProxyRequest) -> MiddlewareOutcome:
         """Inspect ``request`` and return a continue/reject verdict.

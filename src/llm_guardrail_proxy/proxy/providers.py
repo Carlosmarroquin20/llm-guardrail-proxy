@@ -18,8 +18,9 @@ cost of parsing the body just to decide which parser to use.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Protocol
 
 from llm_guardrail_proxy.proxy.envelope import ParsedPrompt, Provider
 from llm_guardrail_proxy.proxy.exceptions import (
@@ -37,7 +38,10 @@ class ProviderAdapter(Protocol):
     knowledge stays in a single module.
     """
 
-    provider: Provider
+    # Read-only property: adapters are frozen dataclasses and callers only
+    # read the provider tag.
+    @property
+    def provider(self) -> Provider: ...
 
     def parse(self, body: bytes) -> ParsedPrompt: ...
 

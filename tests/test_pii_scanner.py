@@ -14,7 +14,7 @@ pytest.importorskip("presidio_analyzer")
 # A second guard for the spaCy model. AnalyzerEngine() construction fails
 # noisily if ``en_core_web_sm`` is missing; we surface that as a skip rather
 # than as a test failure so contributors get an actionable message.
-try:  # noqa: SIM105 — explicit branching keeps the skip reason useful.
+try:
     import spacy  # type: ignore[import-untyped]
 
     spacy.load("en_core_web_sm")

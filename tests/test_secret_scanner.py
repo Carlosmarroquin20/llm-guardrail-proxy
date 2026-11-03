@@ -19,7 +19,6 @@ from llm_guardrail_proxy.proxy.scanning import (
 )
 from llm_guardrail_proxy.proxy.scanning.secrets import _redact
 
-
 # Synthetic fixtures — each value has the correct shape but a deterministic,
 # non-secret body. ``AKIA...`` is the only fragment AWS treats as sensitive
 # (the surrounding random letters make the value structurally valid).

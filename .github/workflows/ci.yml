@@ -11,6 +11,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            pyproject.toml
+      - name: Install (with dev + duckdb extras)
+        # duckdb is installed so its own type information is checked; the
+        # PII stack is skipped and covered by a mypy override instead.
+        run: pip install -e ".[dev,duckdb]"
+      - name: Ruff
+        run: ruff check --output-format=github src tests scripts
+      - name: Mypy (strict)
+        run: mypy
+
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -22,9 +44,9 @@ jobs:
         # 3.13 because it has not yet been ratified as a target.
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -41,8 +63,8 @@ jobs:
     name: Tests (Python 3.11, [pii] extra)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -63,7 +85,7 @@ jobs:
     name: Self-scan via the composite action
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # ``uses: ./`` references the composite action at the repo root.
       # This validates the action contract against this very PR.
       - name: Scan the repo's own prompt fixtures

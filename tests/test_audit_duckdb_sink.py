@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("duckdb")
 
-import duckdb  # noqa: E402  (after importorskip)
+import duckdb
 
 from llm_guardrail_proxy.proxy.audit import (
     AuditRecord,

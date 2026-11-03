@@ -119,7 +119,7 @@ class TestAuditOnSuccess:
             await client.aclose()
             await upstream.aclose()
 
-        assert "x-request-id" in {h.lower() for h in response.headers.keys()}
+        assert "x-request-id" in {h.lower() for h in response.headers}
         header_value = response.headers["x-request-id"]
         # Header value is a parseable UUID matching the audit record.
         assert UUID(header_value) == sink.records[0].request_id

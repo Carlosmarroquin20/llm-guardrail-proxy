@@ -28,7 +28,6 @@ from llm_guardrail_proxy.core.exceptions import (
 )
 from llm_guardrail_proxy.core.pricing import FALLBACK_ENCODING, MODEL_PRICING
 
-
 # --------------------------------------------------------------------- counting
 
 

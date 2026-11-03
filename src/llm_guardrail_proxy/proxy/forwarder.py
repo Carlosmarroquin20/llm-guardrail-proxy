@@ -11,7 +11,7 @@ client-visible transport are stripped before relay.
 
 from __future__ import annotations
 
-from typing import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping
 
 import httpx
 from starlette.background import BackgroundTask

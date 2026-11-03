@@ -22,7 +22,6 @@ from llm_guardrail_proxy.cli.scan import (
     main,
 )
 
-
 # --------------------------------------------------------------- happy path
 
 

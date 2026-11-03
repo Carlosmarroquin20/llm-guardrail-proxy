@@ -102,7 +102,7 @@ def _run_smoke() -> int:
     assert len(jsonl_lines) == 1, f"expected 1 JSONL record, got {len(jsonl_lines)}"
     jsonl_rec = json.loads(jsonl_lines[0])
     assert jsonl_rec["request_id"] == rid
-    print(f"  JSONL: 1 record, request_id matches")
+    print("  JSONL: 1 record, request_id matches")
 
     # --- Sink 2: DuckDB.
     import duckdb
@@ -117,7 +117,7 @@ def _run_smoke() -> int:
     assert duck_rid == rid
     assert duck_verdict == "rejected"
     assert duck_mw == "secret_scan"
-    print(f"  DuckDB: 1 row, request_id matches")
+    print("  DuckDB: 1 row, request_id matches")
 
     # --- Sink 3: structlog (captured via log file).
     log_lines = LOG_FILE.read_text(encoding="utf-8").splitlines()

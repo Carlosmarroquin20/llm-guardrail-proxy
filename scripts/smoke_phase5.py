@@ -80,7 +80,7 @@ def _run_smoke() -> int:
         assert result_clean.returncode == 0, result_clean.stdout + result_clean.stderr
         payload_clean = json.loads(result_clean.stdout)
         assert payload_clean["verdict"] == "allowed"
-        print(f"  clean prompt : exit=0 verdict=allowed")
+        print("  clean prompt : exit=0 verdict=allowed")
 
         # --- Run B.
         result_leak = _scan("--file", str(leak), "--format", "text")
@@ -106,14 +106,14 @@ def _run_smoke() -> int:
         assert result_tokens.returncode == 1
         payload_tok = json.loads(result_tokens.stdout)
         assert payload_tok["rejecting_middleware"] == "tokenomics"
-        print(f"  tokenomics    : exit=1 rejecting_middleware=tokenomics")
+        print("  tokenomics    : exit=1 rejecting_middleware=tokenomics")
 
         # --- Run D: malformed input → exit 2.
         malformed = tmp_path / "bad.json"
         malformed.write_text("{not-json", encoding="utf-8")
         result_bad = _scan("--file", str(malformed))
         assert result_bad.returncode == 2
-        print(f"  malformed json: exit=2")
+        print("  malformed json: exit=2")
 
         print("\nSMOKE OK")
     return 0

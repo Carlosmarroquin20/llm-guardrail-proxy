@@ -17,8 +17,9 @@ modifying the route handler — that is the whole point of the Protocol.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import anyio
 
@@ -44,10 +45,10 @@ class AuditSink(Protocol):
 class NullAuditSink:
     """Discard every record. Used when ``audit_enabled`` is False."""
 
-    async def record(self, entry: AuditRecord) -> None:  # noqa: D401
+    async def record(self, entry: AuditRecord) -> None:
         return None
 
-    async def aclose(self) -> None:  # noqa: D401
+    async def aclose(self) -> None:
         return None
 
 
@@ -77,7 +78,7 @@ class InMemoryAuditSink:
         async with self._lock:
             self._buffer.append(entry)
 
-    async def aclose(self) -> None:  # noqa: D401
+    async def aclose(self) -> None:
         return None
 
     @property
@@ -94,7 +95,7 @@ class InMemoryAuditSink:
     def __len__(self) -> int:
         return len(self._buffer)
 
-    def __iter__(self) -> Iterable[AuditRecord]:  # type: ignore[override]
+    def __iter__(self) -> Iterator[AuditRecord]:
         return iter(tuple(self._buffer))
 
 
@@ -128,7 +129,7 @@ class JsonlAuditSink:
         async with self._lock:
             await anyio.to_thread.run_sync(self._append, line)
 
-    async def aclose(self) -> None:  # noqa: D401
+    async def aclose(self) -> None:
         return None
 
     @property

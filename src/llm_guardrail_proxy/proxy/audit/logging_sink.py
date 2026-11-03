@@ -108,5 +108,5 @@ class LoggingAuditSink:
         # message text, which is permitted to evolve.
         self._logger.info("audit.request", **_record_payload(entry))
 
-    async def aclose(self) -> None:  # noqa: D401
+    async def aclose(self) -> None:
         return None
