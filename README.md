@@ -40,19 +40,19 @@ proxy itself, and no third-party call in the request path.
 ## How it works
 
 ```mermaid
-flowchart LR
-    C[Client / SDK] -->|POST /v1/chat/completions<br/>POST /v1/messages| P[Provider adapter<br/>parse prompt]
+flowchart TD
+    C[Client / SDK] --> P[Provider adapter: parse prompt]
     P --> S[Secret scan]
-    S -->|clean| I[PII scan<br/>optional]
-    I -->|clean or redacted| T[Token & cost check]
-    T -->|within budget| F[Forwarder<br/>+ circuit breaker]
+    S -->|clean| I[PII scan, optional]
+    I -->|clean or redacted| T[Token and cost check]
+    T -->|within budget| F[Forwarder + circuit breaker]
     F --> U[(OpenAI / Anthropic)]
     S -.->|403| R[Rejection response]
     I -.->|403| R
     T -.->|413| R
-    F --> A[Audit sinks<br/>memory · JSONL · DuckDB · logs]
+    F --> A[Audit sinks: memory, JSONL, DuckDB, logs]
     R --> A
-    A --> D[/stats + dashboard/]
+    A --> D[Stats API and dashboard]
 ```
 
 Each middleware returns one of three outcomes: `Continue`, `Reject` (stop and
