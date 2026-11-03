@@ -3,7 +3,7 @@
 # Usage in a consumer's ``.pre-commit-config.yaml``:
 #
 #   - repo: https://github.com/Carlosmarroquin20/llm-guardrail-proxy
-#     rev: v0.5.0   # or any later tag
+#     rev: v0.5.1   # or any later tag
 #     hooks:
 #       - id: llm-guardrail-scan
 #
