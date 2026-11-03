@@ -73,7 +73,7 @@ forwards traffic it cannot inspect.
 Requires Python 3.10+.
 
 ```bash
-pip install "llm-guardrail-proxy @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.5.1"
+pip install "llm-guardrail-proxy @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.6.0"
 llm-guardrail-proxy          # listens on http://127.0.0.1:8080
 ```
 
@@ -148,10 +148,10 @@ See [`.env.example`](.env.example) for the full list.
 ### Optional extras
 
 ```bash
-pip install "llm-guardrail-proxy[pii] @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.5.1"
+pip install "llm-guardrail-proxy[pii] @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.6.0"
 python -m spacy download en_core_web_sm
 
-pip install "llm-guardrail-proxy[duckdb] @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.5.1"
+pip install "llm-guardrail-proxy[duckdb] @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.6.0"
 ```
 
 PII support is off by default because Presidio, spaCy and the English model
@@ -181,7 +181,7 @@ so a hook behaves the same on every machine.
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/Carlosmarroquin20/llm-guardrail-proxy
-    rev: v0.5.1
+    rev: v0.6.0
     hooks:
       - id: llm-guardrail-scan
 ```
@@ -194,7 +194,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: Carlosmarroquin20/llm-guardrail-proxy@v0.5.1
+      - uses: Carlosmarroquin20/llm-guardrail-proxy@v0.6.0
         with:
           files: "prompts/**/*.json"
           tokens: "true"
