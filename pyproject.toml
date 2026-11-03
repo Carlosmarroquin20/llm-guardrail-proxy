@@ -59,6 +59,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# Repository root on sys.path so tests can import the ``evals`` package,
+# which is deliberately kept out of the installed wheel.
+pythonpath = ["."]
 addopts = [
     "-ra",
     "--strict-markers",
@@ -88,6 +91,9 @@ ignore = [
     "RUF022",
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["llm_guardrail_proxy", "evals"]
+
 [tool.ruff.lint.per-file-ignores]
 # The dashboard is an embedded HTML/CSS/JS document stored as a string
 # constant; wrapping its markup to 100 columns would hurt readability.
@@ -95,7 +101,7 @@ ignore = [
 
 [tool.mypy]
 python_version = "3.10"
-files = ["src"]
+files = ["src", "evals", "benchmarks"]
 strict = true
 warn_unreachable = true
 

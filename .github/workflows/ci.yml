@@ -29,9 +29,13 @@ jobs:
         # PII stack is skipped and covered by a mypy override instead.
         run: pip install -e ".[dev,duckdb]"
       - name: Ruff
-        run: ruff check --output-format=github src tests scripts
+        run: ruff check --output-format=github src tests scripts evals benchmarks
       - name: Mypy (strict)
         run: mypy
+      - name: Secret detection report
+        # The pass/fail gate lives in tests/test_secret_detection_eval.py;
+        # this step only publishes the numbers on the run summary.
+        run: python -m evals.secret_detection.run >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: Tests (Python ${{ matrix.python-version }})

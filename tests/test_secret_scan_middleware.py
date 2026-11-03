@@ -55,7 +55,7 @@ class TestSecretScanMiddleware:
     async def test_multiple_secrets_are_aggregated(self) -> None:
         text = (
             "first AKIAABCDEFGHIJKLMNOP "
-            f"second ghp_{'a' * 36}"
+            f"second ghp_{'aB3cD5eF7g' * 3}hJ9kL2"
         )
         outcome = await self.middleware.process(_envelope(text))
         assert isinstance(outcome, Reject)
