@@ -1,130 +1,188 @@
 # llm-guardrail-proxy
 
-A lightweight, high-performance Python proxy for intercepting, auditing, and cost-controlling developer prompts before they reach external LLM providers (OpenAI, Anthropic, et al.).
+[![CI](https://github.com/Carlosmarroquin20/llm-guardrail-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Carlosmarroquin20/llm-guardrail-proxy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 
-The proxy is built on a strict zero-egress validation principle: every guardrail must be computable locally, with no paid third-party dependency.
+A local reverse proxy that sits between your code and the OpenAI / Anthropic
+APIs and inspects every prompt before it leaves your machine. It blocks
+leaked credentials, blocks or redacts PII, and enforces token and cost
+budgets — and records what it decided.
 
-## Architectural Phases
+Every check runs locally. There is no hosted service, no API key for the
+proxy itself, and no third-party call in the request path.
 
-| Phase | Title                                                         | Status        |
-|------:|---------------------------------------------------------------|:-------------:|
-|     1 | Tokenomics & Cost Foundation                                  | Complete      |
-|     2 | Async HTTP Reverse Proxy & Middleware Pipeline                | Complete      |
-|    3a | Content Guardrails — Secret Detection (regex catalogue)       | Complete      |
-|    3b | Content Guardrails — PII Detection (Presidio, BLOCK / REDACT) | Complete      |
-|    4a | FinOps Audit Plane — Record schema + sinks (in-memory, JSONL) | Complete      |
-|    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | Complete      |
-|    4c | FinOps — Read-only `/stats/*` + HTML dashboard                | Complete      |
-|    5a | CI/CD — Shift-left CLI (`llm-guardrail-scan`)                 | Complete      |
-|    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | Complete      |
-|   4b' | FinOps — OpenTelemetry traces                                 | Planned       |
+![Live stats dashboard](docs/images/dashboard.jpg)
 
-## How the proxy works
+## Features
 
-The Phase 1 evaluator and the content guardrails run behind an ASGI reverse proxy:
+- **Secret detection** — regex catalogue for AWS, GitHub, OpenAI, Anthropic,
+  Slack, Stripe and Google keys, JWTs and PEM private keys. Matching prompts
+  are rejected with `403`.
+- **PII detection** (optional) — [Presidio](https://github.com/microsoft/presidio)
+  based, with a `block` policy (reject) or a `redact` policy (rewrite the
+  prompt and forward it).
+- **Token and cost budgets** — counts prompt tokens with `tiktoken` and
+  rejects prompts over a token or USD limit with `413`. All money math uses
+  `Decimal`.
+- **Audit log** — one record per request (allowed, rejected or upstream
+  failure) written to any combination of an in-memory ring, JSONL, DuckDB and
+  structured logs. Records hold redacted previews only, never the prompt or
+  the secret itself.
+- **Stats API and dashboard** — `/stats/summary`, `/stats/recent` and a
+  self-contained HTML dashboard at `/stats/dashboard`.
+- **Shift-left scanning** — the same checks as a CLI (`llm-guardrail-scan`),
+  a pre-commit hook and a GitHub Action, so prompt files with secrets are
+  caught before they are committed.
+- **Transparent forwarding** — streamed responses (including SSE), request
+  IDs, and a circuit breaker in front of upstream calls.
 
-- **FastAPI + httpx** request pipeline with streamed upstream responses.
-- **Typed middleware chain** — each middleware returns `Continue`, `Reject`, or `Mutate` (a redaction applied before forwarding), so policy enforcement points compose cleanly.
-- **Fixed pipeline order: secret scan → PII scan → tokenomics.** Security verdicts outrank cost verdicts.
-- **Async circuit breaker** in front of every upstream call.
-- **Provider adapters** for `POST /v1/chat/completions` and `POST /v1/messages` — additional providers plug in via a single dispatch table.
-- **One audit record per request** (rejection, upstream failure, or success), fanned out to in-memory, JSONL, DuckDB, and structlog sinks. Records carry redacted previews only, never raw prompts or secrets.
-- **Environment-driven configuration** via `pydantic-settings`, nested by concern: `GUARDRAIL_<GROUP>__<FIELD>` (e.g. `GUARDRAIL_NETWORK__LISTEN_PORT`). See `.env.example` for every key.
+## How it works
 
-### Running the proxy
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .[dev]
-python -m llm_guardrail_proxy
+```mermaid
+flowchart LR
+    C[Client / SDK] -->|POST /v1/chat/completions<br/>POST /v1/messages| P[Provider adapter<br/>parse prompt]
+    P --> S[Secret scan]
+    S -->|clean| I[PII scan<br/>optional]
+    I -->|clean or redacted| T[Token & cost check]
+    T -->|within budget| F[Forwarder<br/>+ circuit breaker]
+    F --> U[(OpenAI / Anthropic)]
+    S -.->|403| R[Rejection response]
+    I -.->|403| R
+    T -.->|413| R
+    F --> A[Audit sinks<br/>memory · JSONL · DuckDB · logs]
+    R --> A
+    A --> D[/stats + dashboard/]
 ```
 
-Then point any OpenAI-compatible SDK at the proxy:
+Each middleware returns one of three outcomes: `Continue`, `Reject` (stop and
+answer the client) or `Mutate` (rewrite the prompt, e.g. PII redaction, and
+continue). The order is fixed — secrets, then PII, then cost — so a prompt
+that both leaks a key and exceeds the budget is reported as a security
+problem, not a billing one.
 
-```powershell
-$env:OPENAI_BASE_URL = "http://127.0.0.1:8080/v1"
+Requests to paths the proxy does not understand get a `404`; it never
+forwards traffic it cannot inspect.
+
+## Quick start
+
+Requires Python 3.10+.
+
+```bash
+pip install "llm-guardrail-proxy @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.5.0"
+llm-guardrail-proxy          # listens on http://127.0.0.1:8080
 ```
 
-Open the live dashboard at **http://127.0.0.1:8080/stats/dashboard** for
-an auto-refreshing view of the audit ring (verdicts, costs, latency,
-findings — every 5 seconds). The page is fully self-contained: no CDN
-fonts, no external scripts, no third-party calls.
+Point your SDK at the proxy instead of the provider. Your provider API key is
+passed through unchanged.
 
-### Layout
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8080/v1")
 
-```
-src/llm_guardrail_proxy/
-  core/                     Pure-Python domain logic: pricing, tokenomics (Phase 1)
-  config/                   Conservative default threshold policy
-  proxy/                    Async ASGI surface (Phase 2)
-    middlewares/            Concrete pipeline links (secret, PII, tokenomics)
-    scanning/               Secret pattern catalogue + Presidio PII scanner (Phase 3)
-    audit/                  Audit record schema + sinks (Phase 4a-b)
-    stats/                  /stats/* JSON endpoints + HTML dashboard (Phase 4c)
-  cli/                      Shift-left scanner, llm-guardrail-scan (Phase 5)
-tests/                      Pytest suite (unit + ASGI end-to-end)
-scripts/                    Smoke tests against a real uvicorn process
+from anthropic import Anthropic
+client = Anthropic(base_url="http://127.0.0.1:8080")
 ```
 
-### Development
+Or set `OPENAI_BASE_URL=http://127.0.0.1:8080/v1` /
+`ANTHROPIC_BASE_URL=http://127.0.0.1:8080` and leave the code alone.
 
-```powershell
-pip install -e ".[dev]"            # add ,duckdb or ,pii for the optional extras
-pytest
+### What a blocked request looks like
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user",
+       "content": "Why does boto fail? aws_access_key_id = AKIAIOSFODNN7EXAMPLE"}]}'
 ```
 
-The end-to-end tests drive the ASGI app in-process via `httpx.ASGITransport`
-and intercept upstream traffic with `httpx.MockTransport`; no socket is
-opened during the suite.
-
-For a real-server validation (boots a uvicorn child, sends live requests,
-inspects the JSONL audit ledger), use the Phase 4a smoke script:
-
-```powershell
-python scripts/smoke_phase4.py
+```json
+{
+  "error": "secret_exposure_detected",
+  "detail": "Prompt contains 1 secret-like value(s); refusing to forward.",
+  "middleware": "secret_scan",
+  "annotations": {
+    "secret_scan": {
+      "finding_count": 1,
+      "findings": [
+        {
+          "kind": "aws_access_key_id",
+          "label": "AWS Access Key ID",
+          "severity": "high",
+          "span": [53, 73],
+          "preview": "AKIA***LE"
+        }
+      ]
+    }
+  },
+  "request_id": "7047afd8-fe2d-4bf0-9494-d00d995f9824"
+}
 ```
 
-The script terminates the child process automatically and asserts that
-the audit plane upholds its non-leakage contract against a real socket.
+The request never reaches the provider. The same request ID is returned in
+the `X-Request-Id` header and written to the audit log.
 
-### Shift-left scanning (`llm-guardrail-scan`)
+## Configuration
 
-The same guardrail pipeline is exposed as a one-shot CLI for use in
-pre-commit hooks and CI gates. It returns exit `0` on clean input,
-`1` on a rejection, and `2` on malformed input.
+Settings are read from environment variables (or a `.env` file), grouped by
+concern as `GUARDRAIL_<GROUP>__<FIELD>`. The most common ones:
 
-```powershell
-# Scan a prompt file (provider is auto-detected).
-llm-guardrail-scan --file prompts/agent.json
+| Variable | Default | Purpose |
+|---|---|---|
+| `GUARDRAIL_NETWORK__LISTEN_PORT` | `8080` | Port to listen on (host defaults to `127.0.0.1`). |
+| `GUARDRAIL_TOKENOMICS__MAX_PROMPT_TOKENS` | `8000` | Reject prompts above this many tokens. |
+| `GUARDRAIL_TOKENOMICS__MAX_PROMPT_COST_USD` | `0.05` | Reject prompts whose estimated input cost exceeds this. |
+| `GUARDRAIL_SCANNING__ENABLE_SECRETS` | `true` | Secret detection. |
+| `GUARDRAIL_SCANNING__ENABLE_PII` | `false` | PII detection (needs the `[pii]` extra). |
+| `GUARDRAIL_SCANNING__PII_POLICY` | `block` | `block` or `redact`. |
+| `GUARDRAIL_AUDIT__JSONL_PATH` | unset | Append audit records to a JSONL file. |
+| `GUARDRAIL_AUDIT__DUCKDB_PATH` | unset | Write audit records to DuckDB (needs the `[duckdb]` extra). |
+| `GUARDRAIL_STATS__ENABLE_ENDPOINT` | `true` | Serve `/stats/*` and the dashboard. |
 
-# Scan a literal string, JSON output.
-llm-guardrail-scan --text "summarise this" --model gpt-4o
+See [`.env.example`](.env.example) for the full list.
 
-# Pipe stdin.
-Get-Content prompts/agent.txt | llm-guardrail-scan --model gpt-4o
+### Optional extras
 
-# Enable tokenomics + PII (PII requires the [pii] extra).
-llm-guardrail-scan --file prompts/agent.json --tokens --max-tokens 8000 --pii
+```bash
+pip install "llm-guardrail-proxy[pii] @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.5.0"
+python -m spacy download en_core_web_sm
+
+pip install "llm-guardrail-proxy[duckdb] @ git+https://github.com/Carlosmarroquin20/llm-guardrail-proxy@v0.5.0"
 ```
 
-Defaults are deliberately permissive on tokenomics and PII so commit-
-time false positives don't train developers to bypass the hook;
-`secret_scan` is the only check enabled out of the box.
+PII support is off by default because Presidio, spaCy and the English model
+add roughly 80 MB.
 
-### Adopting in a downstream repository
+## Scanning prompt files before commit
 
-**Pre-commit hook.** Add to `.pre-commit-config.yaml`:
+`llm-guardrail-scan` runs the same checks against prompt files (OpenAI or
+Anthropic request bodies as JSON) without starting the server.
+
+```console
+$ llm-guardrail-scan prompts/summary.json prompts/debug.json --format text
+prompts/summary.json: PASS
+prompts/debug.json: FAIL (secret_scan: secret_exposure_detected)
+    - OpenAI API Key severity=high preview=sk-p***3i
+summary: scanned=2 allowed=1 rejected=1
+```
+
+Exit codes: `0` clean, `1` rejected, `2` invalid input. Only secret scanning
+is on by default; add `--tokens`, `--max-tokens N`, `--max-cost USD` or
+`--pii` to enable the other checks. The CLI ignores `GUARDRAIL_*` variables
+so a hook behaves the same on every machine.
+
+**pre-commit**
 
 ```yaml
-- repo: https://github.com/Carlosmarroquin20/llm-guardrail-proxy
-  rev: v0.5.0
-  hooks:
-    - id: llm-guardrail-scan
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/Carlosmarroquin20/llm-guardrail-proxy
+    rev: v0.5.0
+    hooks:
+      - id: llm-guardrail-scan
 ```
 
-**Reusable GitHub Actions workflow.** Add a job that calls the composite
-action:
+**GitHub Actions**
 
 ```yaml
 jobs:
@@ -139,28 +197,81 @@ jobs:
           max-tokens: "8000"
 ```
 
-The action installs the package from this repository at the pinned ref
-and invokes `llm-guardrail-scan` against the matched files. PII can be
-enabled with `pii: "true"` — that path additionally downloads the spaCy
-English model on the runner.
+Set `pii: "true"` to also run PII detection; the action then installs the
+spaCy model on the runner.
 
-### Enabling PII detection (optional extra)
+## Design notes
 
-PII scanning is opt-in because Presidio + spaCy + the English model add
-~80 MB to the install. Enable it with:
+- **Fail closed on unknown input.** Unknown paths return `404` and malformed
+  bodies return `400` instead of being passed through.
+- **Unknown models are priced at the highest known rate**, so a budget check
+  can over-estimate but never silently under-estimate.
+- **Redaction replaces every occurrence** of a detected value, not only the
+  matched span. Over-redaction is harmless; a missed copy is a leak.
+- **Observability failures never fail a request.** If one audit sink errors,
+  the others still write and the client still gets its response.
+- **Audit is recorded at the transport layer**, not in a middleware, because
+  it needs the upstream status code and total latency.
+- **Everything is injected at build time.** `build_app(settings, pipeline,
+  forwarder)` takes every collaborator, which is how the test suite runs the
+  full proxy in-process against `httpx.MockTransport` without opening a
+  socket.
 
-```powershell
-pip install -e ".[pii]"
-python -m spacy download en_core_web_sm
-$env:GUARDRAIL_SCANNING__ENABLE_PII = "true"
-$env:GUARDRAIL_SCANNING__PII_POLICY = "redact"      # or "block"
-python -m llm_guardrail_proxy
+## Limitations
+
+- The price table covers OpenAI models. Other models, including Claude, are
+  costed at the fallback (highest) rate and their tokens are counted with a
+  `tiktoken` encoding, so both numbers are approximations.
+- Cost checks estimate the **prompt** only; completion tokens are not known
+  before the request is sent.
+- Secret detection matches known key formats. It does not flag arbitrary
+  high-entropy strings.
+- Responses are relayed as-is; only outgoing prompts are inspected.
+- `/stats` reads the in-memory ring, which resets on restart. Use the JSONL or
+  DuckDB sink for history.
+- The proxy has no authentication of its own. It binds to `127.0.0.1` by
+  default; if you expose it, disable `/stats` or put it behind auth, since it
+  shows finding previews and cost data.
+
+## Project layout
+
+```
+src/llm_guardrail_proxy/
+  core/          Pricing and token counting (pure Python, no I/O)
+  config/        Default threshold policy
+  proxy/         FastAPI app, providers, pipeline, forwarder, circuit breaker
+    middlewares/ Secret, PII and tokenomics checks
+    scanning/    Secret pattern catalogue and Presidio wrapper
+    audit/       Audit record schema and sinks
+    stats/       /stats endpoints and dashboard
+  cli/           llm-guardrail-scan
+tests/           Unit and in-process end-to-end tests
+scripts/         Smoke tests against a real uvicorn process
 ```
 
-The PII test modules (`test_pii_*`, `test_proxy_app_phase3b`) auto-skip
-when Presidio or the spaCy model is missing, so the base CI stays green
-on minimal environments.
+## Development
+
+```bash
+git clone https://github.com/Carlosmarroquin20/llm-guardrail-proxy
+cd llm-guardrail-proxy
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"        # add ,duckdb and/or ,pii for the optional extras
+pytest
+```
+
+The suite has 241 tests and runs without network access; PII and DuckDB tests
+are skipped when those extras are not installed. CI runs it on Python 3.10,
+3.11 and 3.12, plus a job with the PII extra and a job that runs the GitHub
+Action against this repository.
+
+The scripts in `scripts/` start a real server and check the audit log, stats
+endpoints, dashboard and CLI end to end, e.g. `python scripts/smoke_phase4.py`.
+
+## Roadmap
+
+- OpenTelemetry traces for the request pipeline.
+- Pricing data for Anthropic models.
 
 ## License
 
-Released under the [MIT License](LICENSE).
+[MIT](LICENSE)
