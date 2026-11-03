@@ -4,11 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-guardrail-proxy"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local, zero-egress security and cost guardrail proxy for external LLM APIs."
 requires-python = ">=3.10"
 readme = "README.md"
-authors = [{ name = "llm-guardrail-proxy maintainers" }]
+license = { file = "LICENSE" }
+authors = [{ name = "Carlosmarroquin20" }]
+keywords = ["llm", "guardrails", "proxy", "secret-scanning", "pii", "finops", "openai", "anthropic"]
 
 # Runtime requirements are duplicated in requirements.txt for tooling that
 # does not consume PEP 621 metadata (e.g. ``pip install -r``).
@@ -21,6 +23,11 @@ dependencies = [
     "pydantic-settings==2.6.1",
     "structlog==24.4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Carlosmarroquin20/llm-guardrail-proxy"
+Repository = "https://github.com/Carlosmarroquin20/llm-guardrail-proxy"
+Issues = "https://github.com/Carlosmarroquin20/llm-guardrail-proxy/issues"
 
 [project.optional-dependencies]
 dev = [

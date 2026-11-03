@@ -10,6 +10,8 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__: str = version("llm-guardrail-proxy")
 except PackageNotFoundError:  # editable install before metadata is materialised
-    __version__ = "0.1.0"
+    # A sentinel rather than a plausible release number: a stale hard-coded
+    # version would silently misreport what is running.
+    __version__ = "0.0.0+unknown"
 
 __all__ = ["__version__"]

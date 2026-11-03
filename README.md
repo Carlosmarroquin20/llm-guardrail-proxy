@@ -16,19 +16,20 @@ The proxy is built on a strict zero-egress validation principle: every guardrail
 |    4b | FinOps — structlog + DuckDB sink + Composite fan-out          | Complete      |
 |    4c | FinOps — Read-only `/stats/*` + HTML dashboard                | Complete      |
 |    5a | CI/CD — Shift-left CLI (`llm-guardrail-scan`)                 | Complete      |
-|    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | **Complete**  |
+|    5b | CI/CD — pre-commit hook + reusable GitHub Actions workflow    | Complete      |
 |   4b' | FinOps — OpenTelemetry traces                                 | Planned       |
-|     5 | CI/CD Distribution & Shift-Left Integration (pre-commit / GH) | Planned       |
 
-## Phase 2 — Async Reverse Proxy
+## How the proxy works
 
-Phase 2 puts the Phase 1 evaluator behind an ASGI reverse proxy:
+The Phase 1 evaluator and the content guardrails run behind an ASGI reverse proxy:
 
 - **FastAPI + httpx** request pipeline with streamed upstream responses.
-- **Typed middleware chain** — middlewares return `Continue` or `Reject` so policy enforcement points compose cleanly.
+- **Typed middleware chain** — each middleware returns `Continue`, `Reject`, or `Mutate` (a redaction applied before forwarding), so policy enforcement points compose cleanly.
+- **Fixed pipeline order: secret scan → PII scan → tokenomics.** Security verdicts outrank cost verdicts.
 - **Async circuit breaker** in front of every upstream call.
 - **Provider adapters** for `POST /v1/chat/completions` and `POST /v1/messages` — additional providers plug in via a single dispatch table.
-- **Environment-driven configuration** via `pydantic-settings` (`GUARDRAIL_*` namespace; see `.env.example`).
+- **One audit record per request** (rejection, upstream failure, or success), fanned out to in-memory, JSONL, DuckDB, and structlog sinks. Records carry redacted previews only, never raw prompts or secrets.
+- **Environment-driven configuration** via `pydantic-settings`, nested by concern: `GUARDRAIL_<GROUP>__<FIELD>` (e.g. `GUARDRAIL_NETWORK__LISTEN_PORT`). See `.env.example` for every key.
 
 ### Running the proxy
 
@@ -54,17 +55,22 @@ fonts, no external scripts, no third-party calls.
 
 ```
 src/llm_guardrail_proxy/
-  core/                     Pure-Python domain logic (Phase 1)
-  config/                   Static, environment-overridable defaults
+  core/                     Pure-Python domain logic: pricing, tokenomics (Phase 1)
+  config/                   Conservative default threshold policy
   proxy/                    Async ASGI surface (Phase 2)
-    middlewares/            Concrete pipeline links
+    middlewares/            Concrete pipeline links (secret, PII, tokenomics)
+    scanning/               Secret pattern catalogue + Presidio PII scanner (Phase 3)
+    audit/                  Audit record schema + sinks (Phase 4a-b)
+    stats/                  /stats/* JSON endpoints + HTML dashboard (Phase 4c)
+  cli/                      Shift-left scanner, llm-guardrail-scan (Phase 5)
 tests/                      Pytest suite (unit + ASGI end-to-end)
+scripts/                    Smoke tests against a real uvicorn process
 ```
 
 ### Development
 
 ```powershell
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"            # add ,duckdb or ,pii for the optional extras
 pytest
 ```
 
@@ -111,7 +117,7 @@ time false positives don't train developers to bypass the hook;
 **Pre-commit hook.** Add to `.pre-commit-config.yaml`:
 
 ```yaml
-- repo: https://github.com/Ema322/llm-guardrail-proxy
+- repo: https://github.com/Carlosmarroquin20/llm-guardrail-proxy
   rev: v0.5.0
   hooks:
     - id: llm-guardrail-scan
@@ -126,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Ema322/llm-guardrail-proxy@v0.5.0
+      - uses: Carlosmarroquin20/llm-guardrail-proxy@v0.5.0
         with:
           files: "prompts/**/*.json"
           tokens: "true"
@@ -146,8 +152,8 @@ PII scanning is opt-in because Presidio + spaCy + the English model add
 ```powershell
 pip install -e ".[pii]"
 python -m spacy download en_core_web_sm
-$env:GUARDRAIL_ENABLE_PII_SCANNING = "true"
-$env:GUARDRAIL_PII_POLICY = "redact"      # or "block"
+$env:GUARDRAIL_SCANNING__ENABLE_PII = "true"
+$env:GUARDRAIL_SCANNING__PII_POLICY = "redact"      # or "block"
 python -m llm_guardrail_proxy
 ```
 
@@ -157,4 +163,4 @@ on minimal environments.
 
 ## License
 
-Internal portfolio project. Not yet licensed for redistribution.
+Released under the [MIT License](LICENSE).

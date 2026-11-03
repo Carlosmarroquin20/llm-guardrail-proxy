@@ -24,7 +24,6 @@ Built in 5 sequential phases. Every guardrail must be computable locally;
 |    5a | CI/CD — Shift-left CLI (llm-guardrail-scan)            | Complete   |
 |    5b | CI/CD — pre-commit + reusable GH Actions workflow      | Complete   |
 |   4b' | FinOps — OpenTelemetry traces                          | Pending    |
-|     5 | CI/CD Distribution & Shift-Left Integration            | Pending    |
 
 Do **not** generate code for a future phase until the user explicitly asks.
 

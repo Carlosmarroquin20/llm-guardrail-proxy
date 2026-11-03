@@ -21,6 +21,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
+from llm_guardrail_proxy import __version__
 from llm_guardrail_proxy.core import ThresholdPolicy, TokenomicsService
 from llm_guardrail_proxy.proxy.audit import (
     AuditSink,
@@ -89,7 +90,9 @@ def build_app(
 
     app = FastAPI(
         title="llm-guardrail-proxy",
-        version="0.4.0",
+        # Sourced from package metadata so the OpenAPI document can never
+        # drift from the version declared in pyproject.toml.
+        version=__version__,
         lifespan=lifespan,
     )
     app.state.settings = settings
