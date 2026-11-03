@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+import anyio
+
 from llm_guardrail_proxy.proxy.envelope import (
     Continue,
     MiddlewareOutcome,
@@ -44,7 +46,11 @@ class PiiScanMiddleware:
     name: str = "pii_scan"
 
     async def process(self, request: ProxyRequest) -> MiddlewareOutcome:
-        findings = self.scanner.scan(request.parsed.content)
+        # spaCy NER is CPU-bound and slow — roughly 20 ms for a short prompt
+        # and over a second for a 6k-token one (see benchmarks/latency.py).
+        # Running it on the event loop would stall every other in-flight
+        # request, health checks included, for that whole time.
+        findings = await anyio.to_thread.run_sync(self.scanner.scan, request.parsed.content)
         if not findings:
             return Continue(annotations={"finding_count": 0})
 

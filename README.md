@@ -20,7 +20,9 @@ proxy itself, and no third-party call in the request path.
 
 - **Secret detection** — regex catalogue for AWS, GitHub, OpenAI, Anthropic,
   Slack, Stripe and Google keys, JWTs and PEM private keys. Matching prompts
-  are rejected with `403`.
+  are rejected with `403`; obvious documentation placeholders
+  (`AKIAXXXXXXXXXXXXXXXX`, `...EXAMPLE`) are let through. Coverage is measured
+  against a labelled corpus ([Detection quality](#detection-quality)).
 - **PII detection** (optional) — [Presidio](https://github.com/microsoft/presidio)
   based, with a `block` policy (reject) or a `redact` policy (rewrite the
   prompt and forward it).
@@ -95,7 +97,7 @@ Or set `OPENAI_BASE_URL=http://127.0.0.1:8080/v1` /
 curl -s http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4o", "messages": [{"role": "user",
-       "content": "Why does boto fail? aws_access_key_id = AKIAIOSFODNN7EXAMPLE"}]}'
+       "content": "Why does boto fail? aws_access_key_id = AKIAZ7Q2WXN4LKD3PRV6"}]}'
 ```
 
 ```json
@@ -111,13 +113,13 @@ curl -s http://127.0.0.1:8080/v1/chat/completions \
           "kind": "aws_access_key_id",
           "label": "AWS Access Key ID",
           "severity": "high",
-          "span": [53, 73],
-          "preview": "AKIA***LE"
+          "span": [40, 60],
+          "preview": "AKIA***V6"
         }
       ]
     }
   },
-  "request_id": "7047afd8-fe2d-4bf0-9494-d00d995f9824"
+  "request_id": "bdeb8989-12a9-4108-97b9-ff2931e91540"
 }
 ```
 
@@ -202,6 +204,88 @@ jobs:
 Set `pii: "true"` to also run PII detection; the action then installs the
 spaCy model on the runner.
 
+## Detection quality
+
+`evals/secret_detection` builds a labelled corpus from a fixed seed and scores
+the secret scanner against it:
+
+- **1,080 positives** — every documented variant of each supported format
+  (e.g. AWS `AKIA` and `ASIA` keys; OpenAI legacy, project, service-account
+  and admin keys; Slack bot, user and app tokens; five PEM key types),
+  embedded in env files, JSON, YAML, URLs, headers, code and prose.
+- **760 hard negatives** — strings that share a prefix, alphabet or length
+  with a credential: UUIDs, git and SHA-256 hashes, base64 blobs, npm
+  integrity hashes, ARNs, Stripe publishable keys and object IDs, public keys
+  and certificates, long `sk-proj-...` kebab-case slugs, prefixes mentioned in
+  prose.
+- **80 placeholders**, reported separately.
+
+```bash
+python -m evals.secret_detection.run
+```
+
+| | Result |
+|---|---:|
+| Recall | 100% |
+| Precision | 100% |
+| Harmless prompts blocked | 0% |
+| Placeholders blocked | 0% |
+
+`tests/test_secret_detection_eval.py` fails CI if any of these regress.
+
+Read these numbers for what they are: the corpus is generated from published
+formats by the same project that wrote the patterns, so it shows that every
+documented shape is covered and that common lookalikes are not flagged. It
+does not measure how the scanner does on real leaks in the wild, on secrets
+with no distinctive format, or on deliberately obfuscated input.
+
+The first run of this evaluation found real gaps — temporary AWS keys,
+GitHub refresh tokens, OpenAI project / service-account / admin keys, Slack
+app tokens, Stripe restricted keys and some keys ending in `-` were missed
+(75% recall overall) — and 64% of placeholders were blocked. Those are fixed and now
+covered by unit tests.
+
+## Performance
+
+`benchmarks/latency.py` starts the proxy and a mock upstream that answers
+instantly, then sends identical requests directly and through the proxy. The
+proxy runs with its shipped defaults (secret scan, tokenomics, in-memory and
+log audit sinks) in a single uvicorn worker.
+
+Added latency at concurrency 1, 1,000 requests per row:
+
+| Prompt | Added p50 | Added p99 |
+|---|---:|---:|
+| ~60 tokens | +3.8 ms | +5.2 ms |
+| ~1,000 tokens | +5.2 ms | +7.1 ms |
+| ~6,000 tokens | +10.5 ms | +10.9 ms |
+
+Throughput through one worker was about 140–170 req/s for short and medium
+prompts. For 6,000-token prompts it was about 80 req/s at concurrency 1 and
+160 req/s at concurrency 16, because token counting runs in worker threads
+and overlaps across requests.
+
+Measured on Windows 11, Python 3.10, 12 logical CPUs, with client, proxy and
+mock on the same machine. Treat these as orders of magnitude; the
+[Benchmark workflow](.github/workflows/benchmark.yml) reruns them on a Linux
+runner. Against a real provider, where a completion takes hundreds of
+milliseconds, the added time is a small fraction of the call.
+
+```bash
+python -m benchmarks.latency            # add --pii to include PII scanning
+```
+
+Profiling with this benchmark led to two changes:
+
+- Secret patterns now start with their literal prefix and check the
+  preceding character with a look-behind instead of a leading `\b`. Python's
+  regex engine can only skip ahead to candidate positions when a pattern
+  starts with a literal, so the full catalogue went from 4.9 ms to 0.3 ms on a
+  31 KB prompt.
+- PII scanning moved off the event loop. With PII enabled, a 6,000-token
+  prompt spends about 1.3 s in spaCy; before the change that blocked every
+  other request, health checks included, for the whole time.
+
 ## Design notes
 
 - **Fail closed on unknown input.** Unknown paths return `404` and malformed
@@ -227,7 +311,15 @@ spaCy model on the runner.
 - Cost checks estimate the **prompt** only; completion tokens are not known
   before the request is sent.
 - Secret detection matches known key formats. It does not flag arbitrary
-  high-entropy strings.
+  high-entropy strings, passwords or AWS secret access keys, which have no
+  distinctive prefix.
+- PII scanning is expensive: about +20 ms on a short prompt, +210 ms at
+  1,000 tokens and +1.3 s at 6,000 tokens in the benchmark above. It runs in
+  a worker thread so other requests keep moving, but each scanned request
+  pays that cost.
+- The in-memory audit ring behind `/stats` is per process, so running several
+  uvicorn workers gives each its own view. Use the JSONL or DuckDB sink for a
+  combined record.
 - Responses are relayed as-is; only outgoing prompts are inspected.
 - `/stats` reads the in-memory ring, which resets on restart. Use the JSONL or
   DuckDB sink for history.
@@ -248,6 +340,8 @@ src/llm_guardrail_proxy/
     stats/       /stats endpoints and dashboard
   cli/           llm-guardrail-scan
 tests/           Unit and in-process end-to-end tests
+evals/           Labelled corpus and scoring for the secret scanner
+benchmarks/      Latency benchmark and mock upstream
 scripts/         Smoke tests against a real uvicorn process
 ```
 
@@ -259,11 +353,11 @@ cd llm-guardrail-proxy
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"        # add ,duckdb and/or ,pii for the optional extras
 pytest
-ruff check src tests scripts
+ruff check src tests scripts evals benchmarks
 mypy                           # strict mode, configured in pyproject.toml
 ```
 
-The suite has 241 tests and runs without network access; PII and DuckDB tests
+The suite has 280 tests and runs without network access; PII and DuckDB tests
 are skipped when those extras are not installed. CI runs ruff and mypy, the
 tests on Python 3.10, 3.11 and 3.12, a job with the PII extra, and a job that
 runs the GitHub Action against this repository.

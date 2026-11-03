@@ -81,6 +81,9 @@ action.yml                Phase 5b: composite GitHub Action.
 .github/workflows/ci.yml  Phase 5b: internal CI (matrix + PII + dogfood).
   __main__.py             uvicorn launcher.
 tests/                    pytest suite, all in-process (no sockets).
+evals/secret_detection/   Seeded labelled corpus + precision/recall scoring.
+benchmarks/               latency.py (proxy vs direct) + mock_upstream.py.
+.github/workflows/benchmark.yml  Manual Linux benchmark run (non-gating).
 ```
 
 ## Architectural invariants
@@ -137,8 +140,12 @@ VS Code interpreter must point at `.venv\Scripts\python.exe` or every import
 will look "missing" in the editor (deps are installed inside the venv only).
 
 Last verified runs:
-- **Without Presidio:** 217 passed, 3 skipped (~5 s).
-- **With `[pii]` extra + spaCy model:** 238 passed (~25 s warm).
+- **With `[pii]` + `[duckdb]` extras + spaCy model:** 280 passed (~17 s warm).
+- **Eval:** `python -m evals.secret_detection.run` — 100% recall / precision,
+  0% lookalike and placeholder blocks (gated by
+  `tests/test_secret_detection_eval.py`).
+- **Benchmark:** `python -m benchmarks.latency` — ~4-11 ms added at c=1
+  (Windows dev box). Not a test; numbers are informational.
 - **Smoke scripts:**
   - `scripts/smoke_phase4.py` — single sink JSONL end-to-end.
   - `scripts/smoke_phase4b.py` — composite (JSONL + DuckDB + structlog)
@@ -182,6 +189,21 @@ Last verified runs:
 - **`ScanFinding.preview` never carries the full secret.** `_redact` keeps
   a 4-char prefix and 2-char suffix only. Auditing the full match would
   re-leak it through the diagnostic plane — the whole point of the scanner.
+- **Secret patterns start with their literal prefix** via `_prefixed()` in
+  `patterns.py`, never with `\b` or a look-behind. A leading assertion
+  disables sre's literal-prefix search (~15x slower catalogue on 30 KB).
+  `test_no_pattern_starts_with_a_boundary_assertion` enforces it.
+- **Placeholders are skipped on purpose.** `SecretScanner` drops matches
+  with a run of 8+ identical chars or containing `EXAMPLE`. Test fixtures
+  must therefore use varied bodies (`_body()` in `test_secret_scanner.py`),
+  not `"a" * 36`.
+- **Any new or changed secret pattern needs a corpus variant** in
+  `evals/secret_detection/corpus.py`. The corpus is generated, never stored:
+  committed credential-shaped literals trip GitHub push protection and the
+  repo's own dogfood scan.
+- **PII scan runs in a worker thread** (`anyio.to_thread.run_sync`), like
+  tokenomics. spaCy takes ~1.3 s on 6k tokens; on the loop it stalls every
+  request. `test_pii_offload.py` guards this.
 - **PII scanning is opt-in.** `enable_pii_scanning` defaults to False
   because Presidio + spaCy + the en_core_web_sm model add ~80 MB. Test
   modules `test_pii_*` and `test_proxy_app_phase3b` `pytest.importorskip`

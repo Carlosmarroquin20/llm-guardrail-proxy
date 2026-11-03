@@ -19,20 +19,30 @@ from llm_guardrail_proxy.proxy.scanning import (
 )
 from llm_guardrail_proxy.proxy.scanning.secrets import _redact
 
+
+def _body(n: int, alphabet: str = "aB3cD5eF7gH9jK2mN4pQ6rS8tU") -> str:
+    """Deterministic, non-repeating filler of length ``n``.
+
+    Bodies like ``"a" * 36`` are deliberately treated as placeholders by the
+    scanner, so fixtures cycle through a mixed alphabet instead.
+    """
+
+    return (alphabet * (n // len(alphabet) + 1))[:n]
+
+
 # Synthetic fixtures — each value has the correct shape but a deterministic,
-# non-secret body. ``AKIA...`` is the only fragment AWS treats as sensitive
-# (the surrounding random letters make the value structurally valid).
+# non-secret body.
 _SAMPLES: dict[str, str] = {
     "aws_access_key_id": "AKIAABCDEFGHIJKLMNOP",
-    "github_pat_classic": "ghp_" + "a" * 36,
-    "github_pat_fine_grained": "github_pat_" + "B" * 82,
-    "github_oauth": "ghs_" + "c" * 36,
-    "openai_api_key": "sk-" + "d" * 48,
-    "anthropic_api_key": "sk-ant-api03-" + "e" * 64,
-    "slack_token": "xoxb-1111111111-2222222222-AbCdEf",
-    "stripe_secret_key": "sk_live_" + "0" * 24,
-    "google_api_key": "AIza" + "Z" * 35,
-    "jwt": "eyJabcdefgh.aaaaaaaa.bbbbbbbb",
+    "github_pat_classic": "ghp_" + _body(36),
+    "github_pat_fine_grained": "github_pat_" + _body(82),
+    "github_oauth": "ghs_" + _body(36),
+    "openai_api_key": "sk-" + _body(48),
+    "anthropic_api_key": "sk-ant-api03-" + _body(64),
+    "slack_token": "xoxb-1234567890-0987654321-AbCdEf",
+    "stripe_secret_key": "sk_live_" + _body(24),
+    "google_api_key": "AIza" + _body(35),
+    "jwt": "eyJabcdefgh.abcdefgh.ijklmnop",
     "pem_private_key": "-----BEGIN RSA PRIVATE KEY-----",
 }
 
@@ -62,6 +72,13 @@ class TestPatternCatalogue:
 
     def test_catalogue_is_non_empty(self) -> None:
         assert len(DEFAULT_SECRET_PATTERNS) >= 10
+
+    def test_no_pattern_starts_with_a_boundary_assertion(self) -> None:
+        # A leading ``\b`` or look-behind disables the regex engine's
+        # literal-prefix search and makes each pattern ~50x slower on large
+        # prompts. Use ``_prefixed`` instead (see patterns.py).
+        for p in DEFAULT_SECRET_PATTERNS:
+            assert not p.regex.pattern.startswith(("\\b", "(?<")), p.name
 
     def test_every_sample_is_paired_with_a_pattern(self) -> None:
         # Guards against catalogue drift: if a new pattern is added without
@@ -107,6 +124,86 @@ class TestNegativeCases:
         # ``sk-shortvalue`` is a common Stripe placeholder in tutorials; we
         # require ≥32 body chars to avoid blocking docs/snippets.
         assert SecretScanner().scan("sk-shortvalue") == ()
+
+    @pytest.mark.parametrize("before", ["x", "7", "_", "é"])
+    def test_prefix_glued_to_a_word_character_is_ignored(self, before: str) -> None:
+        # Same semantics as a leading ``\b``: a word character immediately
+        # before the prefix means the value is part of a longer identifier.
+        assert SecretScanner().scan(before + _SAMPLES["aws_access_key_id"]) == ()
+
+    @pytest.mark.parametrize("before", ["", " ", "=", "'", '"', "(", ":", "-", "\n"])
+    def test_prefix_after_a_separator_is_detected(self, before: str) -> None:
+        findings = SecretScanner().scan(before + _SAMPLES["aws_access_key_id"])
+        assert [f.kind for f in findings] == ["aws_access_key_id"]
+
+    def test_long_lowercase_slug_behind_scoped_prefix_is_ignored(self) -> None:
+        # Long enough for a pure length rule, but no upper-case letter or
+        # digit: an identifier, not a key.
+        slug = "sk-proj-dashboard-service-account-rotation-billing-export"
+        assert SecretScanner().scan(f"see {slug} for details") == ()
+
+    def test_stripe_publishable_key_is_ignored(self) -> None:
+        assert SecretScanner().scan("pk_live_" + _body(30)) == ()
+
+
+# --------------------------------------------------------------- format coverage
+
+
+class TestFormatVariants:
+    """Variants surfaced by ``evals/secret_detection``; each was missed before."""
+
+    @pytest.mark.parametrize(
+        "kind,value",
+        [
+            ("aws_access_key_id", "ASIAABCDEFGHIJKLMNOP"),
+            ("github_oauth", "ghr_" + _body(36)),
+            ("openai_api_key", "sk-proj-" + _body(60, "aB3_-cD5eF7") + "T3BlbkFJ" + _body(60)),
+            ("openai_api_key", "sk-svcacct-" + _body(60, "aB3_-cD5eF7")),
+            ("openai_api_key", "sk-admin-" + _body(60, "aB3_-cD5eF7")),
+            ("slack_token", "xapp-1-A0123456789-1234567890123-" + _body(64, "0123456789abcdef")),
+            ("stripe_secret_key", "rk_live_" + _body(30)),
+        ],
+    )
+    def test_variant_is_detected(self, kind: str, value: str) -> None:
+        assert kind in {f.kind for f in SecretScanner().scan(f"token: {value}\n")}
+
+    def test_token_ending_in_hyphen_is_detected(self) -> None:
+        # ``\b`` cannot anchor after ``-``; the look-ahead boundary must.
+        value = "AIza" + _body(34) + "-"
+        findings = SecretScanner().scan(f'key = "{value}" ')
+        assert [f.kind for f in findings] == ["google_api_key"]
+
+    def test_anthropic_key_is_not_double_reported_as_openai(self) -> None:
+        value = "sk-ant-api03-" + _body(93, "aB3_-cD5eF7") + "AA"
+        assert {f.kind for f in SecretScanner().scan(value)} == {"anthropic_api_key"}
+
+
+# --------------------------------------------------------------- placeholders
+
+
+class TestPlaceholders:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "AKIA" + "X" * 16,
+            "AKIAIOSFODNN7EXAMPLE",
+            "ghp_" + "x" * 36,
+            "sk-" + "x" * 48,
+            "sk_live_" + "0" * 24,
+        ],
+    )
+    def test_placeholder_is_skipped_by_default(self, value: str) -> None:
+        assert SecretScanner().scan(f"set it to {value}") == ()
+
+    def test_placeholders_are_reported_when_skipping_is_disabled(self) -> None:
+        scanner = SecretScanner(skip_placeholders=False)
+        assert {f.kind for f in scanner.scan("AKIA" + "X" * 16)} == {"aws_access_key_id"}
+
+    def test_real_shaped_key_next_to_placeholder_is_still_reported(self) -> None:
+        text = f"old: {'AKIA' + 'X' * 16}, new: {_SAMPLES['aws_access_key_id']}"
+        findings = SecretScanner().scan(text)
+        assert len(findings) == 1
+        assert findings[0].kind == "aws_access_key_id"
 
 
 # --------------------------------------------------------------- composite
